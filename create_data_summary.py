@@ -32,57 +32,27 @@ def get_all_files(input_dir, extension="mseed"):
     return files
 
 
-# def get_snr(stream):
-#     """
-#     Calculate the Signal-to-Noise Ratio (SNR) for each trace in the stream.
+def get_gap_ratio(stream):
+    """
+    Calculate the gap ratio for a given stream.
     
-#     Parameters:
-#     -----------
-#     stream : obspy.Stream
-#         Stream object containing waveform traces
+    Parameters:
+    -----------
+    stream : obspy.Stream
+        Stream object containing traces
     
-#     Returns:
-#     --------
-#     list : List with SNR values for each trace
-#     """
-#     snr_list = []
-#     for tr in stream:
-#         data = tr.data
-#         freq = tr.stats.sampling_rate
-#         signal_window = data[int(10*freq):int(11*freq)]
-#         noise_window = data[int(9*freq):int(10*freq)]
-        
-#         signal_diff = np.max(signal_window) - np.min(signal_window)
-#         noise_diff = np.max(noise_window) - np.min(noise_window)
+    Returns:
+    --------
+    float : Gap ratio (total gap duration / total duration)
+    """
+    gaps = []
+    for tr in stream:
+        data = tr.data
+        gap_size = np.sum(data == 0)
+        total_size = data.shape[0]
+        gaps.append(gap_size / total_size)
 
-#         if noise_diff == 0:
-#             snr = float('inf')
-#         else:
-#             snr = signal_diff / noise_diff
-
-#         snr_list.append(snr)
-#     return snr_list
-
-# def compute_snr_konno(stream, fmin=2.0, fmax=15.0, bexp=20):
-#     snr_results = []
-#     for tr in stream:
-#         npts = tr.stats.npts
-#         sr = tr.stats.sampling_rate
-#         freqs = rfftfreq(npts, d=1/sr)
-#         noise = tr.data[int(9 * sr):int(10 * sr)]
-#         signal = tr.data[int(10 * sr):int(11 * sr)]
-#         if len(noise) == 0 or len(signal) == 0:
-#             return False, 0
-#         fft_noise = np.abs(rfft(noise, n=npts))
-#         fft_signal = np.abs(rfft(signal, n=npts))
-#         smooth_noise = konno_ohmachi_smoothing(fft_noise, freqs, bandwidth=bexp)
-#         smooth_signal = konno_ohmachi_smoothing(fft_signal, freqs, bandwidth=bexp)
-#         snr = smooth_signal / (smooth_noise + 1e-20)
-#         mask = (freqs >= fmin) & (freqs <= fmax)
-#         valid = np.all(snr[mask] > 10)
-#         snr_results.append((valid, np.mean(snr[mask])))
-
-#     return snr_results
+    return gaps
 
 
 def konno_ohmachi_weight_matrix(freqs, bandwidth=20.0):
@@ -221,6 +191,7 @@ def create_summary(events, waveform_files, output_file="data/waveform_summary.cs
             # Extract event ID from filename
             event_id = os.path.basename(wf_file).split("_")[0]
             magnitude = event_magnitude(events, event_id)
+            gaps = get_gap_ratio(st)
             
             # for snr in snr_values:
             summary_data.append({
@@ -229,7 +200,10 @@ def create_summary(events, waveform_files, output_file="data/waveform_summary.cs
                 "snr1": snr_values[0][1] if len(snr_values) > 0 else np.nan,
                 "snr2": snr_values[1][1] if len(snr_values) > 1 else np.nan,
                 "snr3": snr_values[2][1] if len(snr_values) > 2 else np.nan,
-                "waveform_file": wf_file
+                "waveform_file": wf_file,
+                "gap1": gaps[0] if len(gaps) > 0 else np.nan,
+                "gap2": gaps[1] if len(gaps) > 1 else np.nan,
+                "gap3": gaps[2] if len(gaps) > 2 else np.nan
             })
         except Exception as e:
             print(f"Error processing {wf_file}: {e}")
