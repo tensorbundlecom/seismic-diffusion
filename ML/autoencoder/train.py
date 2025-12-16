@@ -486,19 +486,19 @@ def parse_args():
     parser.add_argument('--model_type', type=str, default='autoencoder',
                         choices=['autoencoder', 'vae'],
                         help='Type of model to train (autoencoder or vae)')
-    parser.add_argument('--latent_dim', type=int, default=128,
+    parser.add_argument('--latent_dim', type=int, default=256,
                         help='Dimension of latent space')
-    parser.add_argument('--beta', type=float, default=1.0,
+    parser.add_argument('--beta', type=float, default=0.1,
                         help='Beta parameter for VAE loss (beta-VAE). Higher values encourage stronger disentanglement.')
     
     # Training arguments
     parser.add_argument('--batch_size', type=int, default=16,
                         help='Batch size for training')
-    parser.add_argument('--num_epochs', type=int, default=50,
+    parser.add_argument('--num_epochs', type=int, default=5,
                         help='Number of training epochs')
-    parser.add_argument('--lr', type=float, default=1e-3,
+    parser.add_argument('--lr', type=float, default=0.0005,
                         help='Learning rate')
-    parser.add_argument('--weight_decay', type=float, default=1e-5,
+    parser.add_argument('--weight_decay', type=float, default=0.000007,
                         help='Weight decay for optimizer')
     parser.add_argument('--val_split', type=float, default=0.1,
                         help='Validation split ratio')

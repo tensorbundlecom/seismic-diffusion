@@ -1,0 +1,101 @@
+{
+    "study_name": "vae_hpo",
+    "timestamp": "20251216_200226",
+    "n_trials": 15,
+    "n_complete": 7,
+    "n_pruned": 8,
+    "best_value": 195.816353310784,
+    "best_params": {
+        "latent_dim": 256,
+        "lr": 0.0005321637324299863,
+        "batch_size": 16,
+        "weight_decay": 6.714052151177104e-06,
+        "beta": 0.10934786965955276
+    },
+    "trials": [
+        {
+            "number": 0,
+            "value": 197.65905079738698,
+            "params": {
+                "latent_dim": 256,
+                "lr": 0.0007352020244005688,
+                "batch_size": 16,
+                "weight_decay": 6.192461530870066e-06,
+                "beta": 0.13413641835011447
+            },
+            "duration": 611.655396
+        },
+        {
+            "number": 1,
+            "value": 196.15210778764683,
+            "params": {
+                "latent_dim": 128,
+                "lr": 0.0026021774217125254,
+                "batch_size": 16,
+                "weight_decay": 1.2894144202486216e-06,
+                "beta": 0.11556296196615316
+            },
+            "duration": 538.372413
+        },
+        {
+            "number": 2,
+            "value": 206.76504465807574,
+            "params": {
+                "latent_dim": 128,
+                "lr": 0.00746074995067658,
+                "batch_size": 8,
+                "weight_decay": 1.8150430037728219e-06,
+                "beta": 0.25958207551104795
+            },
+            "duration": 667.367339
+        },
+        {
+            "number": 3,
+            "value": 254.8511897574226,
+            "params": {
+                "latent_dim": 512,
+                "lr": 0.0009577839425237181,
+                "batch_size": 32,
+                "weight_decay": 2.362329882892539e-06,
+                "beta": 0.8828467653024077
+            },
+            "duration": 585.822257
+        },
+        {
+            "number": 4,
+            "value": 219.26805995694167,
+            "params": {
+                "latent_dim": 128,
+                "lr": 0.005694691399190727,
+                "batch_size": 32,
+                "weight_decay": 4.627724991272494e-06,
+                "beta": 0.14624243805452997
+            },
+            "duration": 184.486306
+        },
+        {
+            "number": 10,
+            "value": 319.4655385188919,
+            "params": {
+                "latent_dim": 64,
+                "lr": 0.0025531073819491084,
+                "batch_size": 64,
+                "weight_decay": 8.569978706136745e-05,
+                "beta": 6.37802007868007
+            },
+            "duration": 174.696191
+        },
+        {
+            "number": 13,
+            "value": 195.816353310784,
+            "params": {
+                "latent_dim": 256,
+                "lr": 0.0005321637324299863,
+                "batch_size": 16,
+                "weight_decay": 6.714052151177104e-06,
+                "beta": 0.10934786965955276
+            },
+            "duration": 605.808551
+        }
+    ]
+}

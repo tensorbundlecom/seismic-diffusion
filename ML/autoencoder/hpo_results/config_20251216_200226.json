@@ -1,0 +1,22 @@
+{
+    "data_dir": "../../data/filtered_waveforms",
+    "channels": [
+        "HH"
+    ],
+    "nperseg": 256,
+    "noverlap": 192,
+    "nfft": 256,
+    "val_split": 0.2,
+    "num_workers": 4,
+    "max_epochs_per_trial": 5,
+    "early_stopping_patience": 1,
+    "n_trials": 15,
+    "study_name": "vae_hpo",
+    "storage": null,
+    "load_if_exists": false,
+    "timeout": null,
+    "pruner": "median",
+    "device": "cuda",
+    "seed": 42,
+    "output_dir": "hpo_results"
+}
