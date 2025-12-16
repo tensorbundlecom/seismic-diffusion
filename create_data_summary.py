@@ -48,8 +48,10 @@ def get_gap_ratio(stream):
     gaps = []
     for tr in stream:
         data = tr.data
-        gap_size = np.sum(data == 0)
-        total_size = data.shape[0]
+        # print(data.shape, 70*tr.stats.sampling_rate, np.sum(data == 0))
+        gap_size = np.sum(data == 0) + (70*tr.stats.sampling_rate - data.shape[0] + 1)
+        # total_size = data.shape[0]
+        total_size = 70*tr.stats.sampling_rate  # 70 seconds of data
         gaps.append(gap_size / total_size)
 
     return gaps
