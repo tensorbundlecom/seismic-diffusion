@@ -2,3 +2,6 @@ data/
 __pycache__/
 .venv/
 catalog.ipynb
+*.pt
+ML/autoencoder/checkpoints/
+ML/autoencoder/logs/
