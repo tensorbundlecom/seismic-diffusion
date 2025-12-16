@@ -12,7 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from tqdm import tqdm
 
-from model import ConvAutoencoder
+from model import ConvAutoencoder, VariationalAutoencoder
 from stft_dataset import SeismicSTFTDataset, collate_fn
 
 
@@ -34,6 +34,8 @@ class Trainer:
         config,
         test_loader=None,
         log_interval=10,
+        is_vae=False,
+        beta=1.0,
     ):
         self.model = model
         self.train_loader = train_loader
@@ -45,6 +47,8 @@ class Trainer:
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.log_interval = log_interval
+        self.is_vae = is_vae
+        self.beta = beta
         
         # TensorBoard writer
         self.writer = SummaryWriter(log_dir=log_dir)
@@ -76,10 +80,21 @@ class Trainer:
             
             # Forward pass
             self.optimizer.zero_grad()
-            reconstructed = self.model(spectrograms)
             
-            # Compute loss
-            loss = self.criterion(reconstructed, spectrograms)
+            if self.is_vae:
+                reconstructed, mu, logvar = self.model(spectrograms)
+                # Compute VAE loss
+                loss, recon_loss, kl_loss = VariationalAutoencoder.loss_function(
+                    reconstructed, spectrograms, mu, logvar, beta=self.beta
+                )
+                # Normalize by batch size for consistency
+                loss = loss / spectrograms.size(0)
+                recon_loss_item = recon_loss.item() / spectrograms.size(0)
+                kl_loss_item = kl_loss.item() / spectrograms.size(0)
+            else:
+                reconstructed = self.model(spectrograms)
+                # Compute standard autoencoder loss
+                loss = self.criterion(reconstructed, spectrograms)
             
             # Backward pass
             loss.backward()
@@ -97,6 +112,11 @@ class Trainer:
                 global_step = self.current_epoch * len(self.train_loader) + batch_idx
                 self.writer.add_scalar('Train/batch_loss', loss.item(), global_step)
                 
+                # Log VAE-specific metrics
+                if self.is_vae:
+                    self.writer.add_scalar('Train/recon_loss', recon_loss_item, global_step)
+                    self.writer.add_scalar('Train/kl_loss', kl_loss_item, global_step)
+                
                 # Periodic evaluation during training
                 if eval_interval and (batch_idx + 1) % eval_interval == 0:
                     self._quick_eval(global_step)
@@ -113,9 +133,18 @@ class Trainer:
                 if spectrograms is None:
                     continue
                 spectrograms = spectrograms.to(self.device)
-                reconstructed = self.model(spectrograms)
-                val_loss = self.criterion(reconstructed, spectrograms)
-                self.writer.add_scalar('Val/batch_loss', val_loss.item(), global_step)
+                
+                if self.is_vae:
+                    reconstructed, mu, logvar = self.model(spectrograms)
+                    val_loss, recon_loss, kl_loss = VariationalAutoencoder.loss_function(
+                        reconstructed, spectrograms, mu, logvar, beta=self.beta
+                    )
+                    val_loss = val_loss.item() / spectrograms.size(0)
+                else:
+                    reconstructed = self.model(spectrograms)
+                    val_loss = self.criterion(reconstructed, spectrograms).item()
+                
+                self.writer.add_scalar('Val/batch_loss', val_loss, global_step)
                 break  # Only evaluate on first batch
             
             # Test on first batch if available
@@ -124,9 +153,18 @@ class Trainer:
                     if spectrograms is None:
                         continue
                     spectrograms = spectrograms.to(self.device)
-                    reconstructed = self.model(spectrograms)
-                    test_loss = self.criterion(reconstructed, spectrograms)
-                    self.writer.add_scalar('Test/batch_loss', test_loss.item(), global_step)
+                    
+                    if self.is_vae:
+                        reconstructed, mu, logvar = self.model(spectrograms)
+                        test_loss, _, _ = VariationalAutoencoder.loss_function(
+                            reconstructed, spectrograms, mu, logvar, beta=self.beta
+                        )
+                        test_loss = test_loss.item() / spectrograms.size(0)
+                    else:
+                        reconstructed = self.model(spectrograms)
+                        test_loss = self.criterion(reconstructed, spectrograms).item()
+                    
+                    self.writer.add_scalar('Test/batch_loss', test_loss, global_step)
                     break  # Only evaluate on first batch
         
         self.writer.flush()
@@ -136,6 +174,8 @@ class Trainer:
         """Validate the model."""
         self.model.eval()
         epoch_loss = 0.0
+        epoch_recon_loss = 0.0
+        epoch_kl_loss = 0.0
         num_batches = 0
         
         with torch.no_grad():
@@ -148,28 +188,59 @@ class Trainer:
                 spectrograms = spectrograms.to(self.device)
                 
                 # Forward pass
-                reconstructed = self.model(spectrograms)
-                
-                # Compute loss
-                loss = self.criterion(reconstructed, spectrograms)
+                if self.is_vae:
+                    reconstructed, mu, logvar = self.model(spectrograms)
+                    # Compute VAE loss
+                    loss, recon_loss, kl_loss = VariationalAutoencoder.loss_function(
+                        reconstructed, spectrograms, mu, logvar, beta=self.beta
+                    )
+                    # Normalize by batch size
+                    loss = loss / spectrograms.size(0)
+                    recon_loss_item = recon_loss.item() / spectrograms.size(0)
+                    kl_loss_item = kl_loss.item() / spectrograms.size(0)
+                    
+                    epoch_recon_loss += recon_loss_item
+                    epoch_kl_loss += kl_loss_item
+                else:
+                    reconstructed = self.model(spectrograms)
+                    # Compute standard loss
+                    loss = self.criterion(reconstructed, spectrograms)
                 
                 # Update metrics
                 epoch_loss += loss.item()
                 num_batches += 1
                 
                 # Update progress bar
-                pbar.set_postfix({'loss': loss.item()})
+                if self.is_vae:
+                    pbar.set_postfix({
+                        'loss': loss.item(),
+                        'recon': recon_loss_item,
+                        'kl': kl_loss_item
+                    })
+                else:
+                    pbar.set_postfix({'loss': loss.item()})
                 
                 # Log to tensorboard every N batches
                 if (batch_idx + 1) % self.log_interval == 0:
                     global_step = self.current_epoch * len(self.val_loader) + batch_idx
                     self.writer.add_scalar('Val/batch_loss', loss.item(), global_step)
+                    if self.is_vae:
+                        self.writer.add_scalar('Val/recon_loss', recon_loss_item, global_step)
+                        self.writer.add_scalar('Val/kl_loss', kl_loss_item, global_step)
                 
                 # Log first batch images to tensorboard
                 if batch_idx == 0:
                     self._log_images(spectrograms, reconstructed, prefix='Val')
         
         avg_loss = epoch_loss / num_batches if num_batches > 0 else 0.0
+        
+        # Log epoch averages for VAE
+        if self.is_vae and num_batches > 0:
+            avg_recon_loss = epoch_recon_loss / num_batches
+            avg_kl_loss = epoch_kl_loss / num_batches
+            self.writer.add_scalar('Val/epoch_recon_loss', avg_recon_loss, self.current_epoch)
+            self.writer.add_scalar('Val/epoch_kl_loss', avg_kl_loss, self.current_epoch)
+        
         return avg_loss
     
     def test(self, num_images=8):
@@ -180,6 +251,8 @@ class Trainer:
             
         self.model.eval()
         epoch_loss = 0.0
+        epoch_recon_loss = 0.0
+        epoch_kl_loss = 0.0
         num_batches = 0
         
         with torch.no_grad():
@@ -192,22 +265,45 @@ class Trainer:
                 spectrograms = spectrograms.to(self.device)
                 
                 # Forward pass
-                reconstructed = self.model(spectrograms)
-                
-                # Compute loss
-                loss = self.criterion(reconstructed, spectrograms)
+                if self.is_vae:
+                    reconstructed, mu, logvar = self.model(spectrograms)
+                    # Compute VAE loss
+                    loss, recon_loss, kl_loss = VariationalAutoencoder.loss_function(
+                        reconstructed, spectrograms, mu, logvar, beta=self.beta
+                    )
+                    # Normalize by batch size
+                    loss = loss / spectrograms.size(0)
+                    recon_loss_item = recon_loss.item() / spectrograms.size(0)
+                    kl_loss_item = kl_loss.item() / spectrograms.size(0)
+                    
+                    epoch_recon_loss += recon_loss_item
+                    epoch_kl_loss += kl_loss_item
+                else:
+                    reconstructed = self.model(spectrograms)
+                    # Compute standard loss
+                    loss = self.criterion(reconstructed, spectrograms)
                 
                 # Update metrics
                 epoch_loss += loss.item()
                 num_batches += 1
                 
                 # Update progress bar
-                pbar.set_postfix({'loss': loss.item()})
+                if self.is_vae:
+                    pbar.set_postfix({
+                        'loss': loss.item(),
+                        'recon': recon_loss_item,
+                        'kl': kl_loss_item
+                    })
+                else:
+                    pbar.set_postfix({'loss': loss.item()})
                 
                 # Log to tensorboard every N batches
                 if (batch_idx + 1) % self.log_interval == 0:
                     global_step = self.current_epoch * len(self.test_loader) + batch_idx
                     self.writer.add_scalar('Test/batch_loss', loss.item(), global_step)
+                    if self.is_vae:
+                        self.writer.add_scalar('Test/recon_loss', recon_loss_item, global_step)
+                        self.writer.add_scalar('Test/kl_loss', kl_loss_item, global_step)
                 
                 # Log first batch images to tensorboard
                 if batch_idx == 0:
@@ -215,6 +311,14 @@ class Trainer:
         
         avg_loss = epoch_loss / num_batches if num_batches > 0 else 0.0
         print(f"\nTest Loss: {avg_loss:.6f}")
+        
+        # Print VAE-specific losses
+        if self.is_vae and num_batches > 0:
+            avg_recon_loss = epoch_recon_loss / num_batches
+            avg_kl_loss = epoch_kl_loss / num_batches
+            print(f"Test Reconstruction Loss: {avg_recon_loss:.6f}")
+            print(f"Test KL Divergence: {avg_kl_loss:.6f}")
+        
         self.writer.flush()
         return avg_loss
     
@@ -382,8 +486,13 @@ def parse_args():
                         help='Length of the FFT used')
     
     # Model arguments
+    parser.add_argument('--model_type', type=str, default='autoencoder',
+                        choices=['autoencoder', 'vae'],
+                        help='Type of model to train (autoencoder or vae)')
     parser.add_argument('--latent_dim', type=int, default=128,
                         help='Dimension of latent space')
+    parser.add_argument('--beta', type=float, default=1.0,
+                        help='Beta parameter for VAE loss (beta-VAE). Higher values encourage stronger disentanglement.')
     
     # Training arguments
     parser.add_argument('--batch_size', type=int, default=16,
@@ -496,8 +605,13 @@ def main():
     )
     
     # Create model
-    print("Creating model...")
-    model = ConvAutoencoder(in_channels=3, latent_dim=args.latent_dim)
+    print(f"Creating {args.model_type} model...")
+    if args.model_type == 'vae':
+        model = VariationalAutoencoder(in_channels=3, latent_dim=args.latent_dim)
+        print(f"Using beta-VAE with beta={args.beta}")
+    else:
+        model = ConvAutoencoder(in_channels=3, latent_dim=args.latent_dim)
+    
     model = model.to(device)
     
     num_params = sum(p.numel() for p in model.parameters())
@@ -532,6 +646,8 @@ def main():
         config=config,
         test_loader=test_loader,
         log_interval=args.log_interval,
+        is_vae=(args.model_type == 'vae'),
+        beta=args.beta,
     )
     
     # Resume from checkpoint if specified
