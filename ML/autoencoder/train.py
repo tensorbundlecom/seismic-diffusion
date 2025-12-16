@@ -417,12 +417,10 @@ class Trainer:
             val_loss = self.validate()
             self.val_losses.append(val_loss)
             
-            # Log to tensorboard (using global step for consistency with batch logs)
-            train_global_step = (epoch + 1) * len(self.train_loader)
-            val_global_step = (epoch + 1) * len(self.val_loader)
-            
-            self.writer.add_scalar('Train/epoch_loss', train_loss, train_global_step)
-            self.writer.add_scalar('Val/epoch_loss', val_loss, val_global_step)
+            # Log to tensorboard (using epoch number to avoid gaps in x-axis)
+            # Note: batch logs use global_step, but epoch logs use epoch number
+            self.writer.add_scalar('Train/epoch_loss', train_loss, epoch)
+            self.writer.add_scalar('Val/epoch_loss', val_loss, epoch)
             
             # Also log with epoch number for easy viewing
             self.writer.add_scalar('Loss/train_per_epoch', train_loss, epoch)
@@ -441,9 +439,8 @@ class Trainer:
                 test_loss = self.test()
                 if test_loss is not None:
                     print(f"  Test Loss:  {test_loss:.6f}")
-                    # Log test loss per epoch
-                    test_global_step = (epoch + 1) * len(self.test_loader)
-                    self.writer.add_scalar('Test/epoch_loss', test_loss, test_global_step)
+                    # Log test loss per epoch (using epoch number to avoid gaps)
+                    self.writer.add_scalar('Test/epoch_loss', test_loss, epoch)
                     self.writer.add_scalar('Loss/test_per_epoch', test_loss, epoch)
                     self.writer.flush()
             
@@ -507,7 +504,7 @@ def parse_args():
                         help='Validation split ratio')
     parser.add_argument('--num_workers', type=int, default=4,
                         help='Number of data loader workers')
-    parser.add_argument('--test_interval', type=int, default=10,
+    parser.add_argument('--test_interval', type=int, default=1,
                         help='Evaluate on test set every N epochs')
     parser.add_argument('--log_interval', type=int, default=10,
                         help='Log batch losses to tensorboard every N batches')
