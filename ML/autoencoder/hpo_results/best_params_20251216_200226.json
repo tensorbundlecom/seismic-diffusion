@@ -1,0 +1,11 @@
+{
+    "best_val_loss": 195.816353310784,
+    "params": {
+        "latent_dim": 256,
+        "lr": 0.0005321637324299863,
+        "batch_size": 16,
+        "weight_decay": 6.714052151177104e-06,
+        "beta": 0.10934786965955276
+    },
+    "trial_number": 13
+}
