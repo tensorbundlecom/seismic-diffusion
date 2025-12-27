@@ -76,7 +76,7 @@ class Decoder(nn.Module):
             # Output: (32, H/2, W/2)
             
             nn.ConvTranspose2d(32, out_channels, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.Sigmoid()  # Output in range [0, 1]
+            # nn.Sigmoid()  # Output in range [0, 1]
             # Output: (out_channels, H, W)
         )
         
@@ -160,6 +160,21 @@ class ConvAutoencoder(nn.Module):
             Reconstructed image tensor
         """
         return self.decoder(latent)
+    
+    def create_embedding(self, x):
+        """
+        Create latent embedding from input without reconstruction.
+        
+        This is useful for dimensionality reduction, visualization,
+        or as features for downstream tasks.
+        
+        Args:
+            x: Input tensor of shape (batch_size, in_channels, height, width)
+            
+        Returns:
+            Latent embedding tensor of shape (batch_size, 256, H/16, W/16)
+        """
+        return self.encode(x)
 
 
 def get_model(in_channels=3, latent_dim=128, device='cuda'):
@@ -383,6 +398,26 @@ class VariationalAutoencoder(nn.Module):
         z = torch.randn(num_samples, self.latent_dim).to(device)
         samples = self.decode(z)
         return samples
+    
+    def create_embedding(self, x, use_mean=True):
+        """
+        Create latent embedding from input without reconstruction.
+        
+        For VAE, this returns the mean of the latent distribution by default
+        (deterministic embedding), or a sampled embedding if use_mean=False.
+        
+        Args:
+            x: Input tensor of shape (batch_size, in_channels, height, width)
+            use_mean (bool): If True, return mu (deterministic). If False, sample z.
+            
+        Returns:
+            Latent embedding tensor of shape (batch_size, latent_dim)
+        """
+        mu, logvar = self.encode(x)
+        if use_mean:
+            return mu
+        else:
+            return self.reparameterize(mu, logvar)
     
     @staticmethod
     def kl_divergence(mu, logvar):
@@ -793,6 +828,29 @@ class ConditionalVariationalAutoencoder(nn.Module):
         z = torch.randn(num_samples, self.latent_dim).to(device)
         samples = self.decode(z, magnitude, location, station_idx)
         return samples
+    
+    def create_embedding(self, x, magnitude, location, station_idx, use_mean=True):
+        """
+        Create latent embedding from input and conditioning information without reconstruction.
+        
+        For CVAE, this returns the mean of the conditioned latent distribution by default
+        (deterministic embedding), or a sampled embedding if use_mean=False.
+        
+        Args:
+            x: Input tensor of shape (batch_size, in_channels, height, width)
+            magnitude: Event magnitude tensor of shape (batch_size,)
+            location: Normalized location tensor of shape (batch_size, 3)
+            station_idx: Station index tensor of shape (batch_size,)
+            use_mean (bool): If True, return mu (deterministic). If False, sample z.
+            
+        Returns:
+            Latent embedding tensor of shape (batch_size, latent_dim)
+        """
+        mu, logvar = self.encode(x, magnitude, location, station_idx)
+        if use_mean:
+            return mu
+        else:
+            return self.reparameterize(mu, logvar)
     
     @staticmethod
     def kl_divergence(mu, logvar):
