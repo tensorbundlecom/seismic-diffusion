@@ -3,7 +3,13 @@ __pycache__/
 .venv/
 catalog.ipynb
 *.pt
+*.json
+*.npz
+*.npy
 ML/autoencoder/checkpoints/
 ML/autoencoder/logs/
+ML/diffusion/checkpoints/
+ML/diffusion/logs/
 checkpoints_cvae
 logs_cvae
+data.zip
