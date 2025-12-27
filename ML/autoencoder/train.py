@@ -120,6 +120,9 @@ class Trainer:
                 # Periodic evaluation during training
                 if eval_interval and (batch_idx + 1) % eval_interval == 0:
                     self._quick_eval(global_step)
+                
+                # Flush writer to ensure logs are written
+                self.writer.flush()
         
         avg_loss = epoch_loss / num_batches if num_batches > 0 else 0.0
         return avg_loss
@@ -240,6 +243,9 @@ class Trainer:
             avg_kl_loss = epoch_kl_loss / num_batches
             self.writer.add_scalar('Val/epoch_recon_loss', avg_recon_loss, self.current_epoch)
             self.writer.add_scalar('Val/epoch_kl_loss', avg_kl_loss, self.current_epoch)
+        
+        # Flush writer to ensure logs are written
+        self.writer.flush()
         
         return avg_loss
     
@@ -483,7 +489,7 @@ def parse_args():
                         help='Length of the FFT used')
     
     # Model arguments
-    parser.add_argument('--model_type', type=str, default='autoencoder',
+    parser.add_argument('--model_type', type=str, default='vae',
                         choices=['autoencoder', 'vae'],
                         help='Type of model to train (autoencoder or vae)')
     parser.add_argument('--latent_dim', type=int, default=256,
