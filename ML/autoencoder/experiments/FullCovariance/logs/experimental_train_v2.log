@@ -1,0 +1,69 @@
+nohup: ignoring input
+Loading event catalog from data/events/koeri_catalog.txt...
+Loaded 160 events
+Location bounds:
+  Latitude: [40.0067, 41.3648]
+  Longitude: [26.0170, 29.5157]
+  Depth: [0.0000, 24.3510] km
+Found 644 mseed files
+Found 125 unique stations
+Starting Full Covariance Experiment - Latent Dim: 128
+Error loading data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11542083_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11542083_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KAVV_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KAVV_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11307175_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11307175_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11780675_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11780675_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_SAUV_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_SAUV_HH.mseed
+Epoch 1/10 - Loss: 104618.0856
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11542083_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11542083_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_SAUV_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_SAUV_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11307175_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11307175_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KAVV_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KAVV_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11780675_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11780675_EDC_HH.mseed
+Epoch 2/10 - Loss: 85372.8983
+Error loading data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11307175_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11307175_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_SAUV_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_SAUV_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11780675_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11780675_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KAVV_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KAVV_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11542083_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11542083_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed
+Epoch 3/10 - Loss: 63321.5913
+Error loading data/filtered_waveforms/HH/query?eventid=11307175_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11307175_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11780675_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11780675_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_SAUV_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_SAUV_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11542083_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11542083_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KAVV_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KAVV_HH.mseed
+Epoch 4/10 - Loss: 47654.1649
+Error loading data/filtered_waveforms/HH/query?eventid=11307175_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11307175_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed

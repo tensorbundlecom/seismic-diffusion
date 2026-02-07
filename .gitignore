@@ -7,3 +7,4 @@ ML/autoencoder/checkpoints/
 ML/autoencoder/logs/
 checkpoints_cvae
 logs_cvae
+AGENTS.md

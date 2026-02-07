@@ -1,0 +1,21 @@
+nohup: ignoring input
+Loading event catalog from data/events/koeri_catalog.txt...
+Loaded 160 events
+Location bounds:
+  Latitude: [40.0067, 41.3648]
+  Longitude: [26.0170, 29.5157]
+  Depth: [0.0000, 24.3510] km
+Found 644 mseed files
+Found 125 unique stations
+Starting Full Covariance Experiment - Latent Dim: 128
+Epoch 1/10 - Loss: 120657.9173
+Epoch 2/10 - Loss: 80558.0104
+Epoch 3/10 - Loss: 56597.6815
+Epoch 4/10 - Loss: 44914.2084
+Epoch 5/10 - Loss: 37521.3625
+Epoch 6/10 - Loss: 32117.1352
+Epoch 7/10 - Loss: 27988.1426
+Epoch 8/10 - Loss: 24965.5405
+Epoch 9/10 - Loss: 22267.3296
+Epoch 10/10 - Loss: 20145.7327
+Model saved to checkpoints_full_cov/koeri_catalog/full_cov_cvae_best.pt

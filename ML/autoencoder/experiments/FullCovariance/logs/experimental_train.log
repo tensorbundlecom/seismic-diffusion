@@ -1,0 +1,310 @@
+nohup: ignoring input
+Loading event catalog from data/events/koeri_catalog.txt...
+Loaded 160 events
+Location bounds:
+  Latitude: [40.0067, 41.3648]
+  Longitude: [26.0170, 29.5157]
+  Depth: [0.0000, 24.3510] km
+Found 644 mseed files
+Found 125 unique stations
+Starting Full Covariance Experiment - Latent Dim: 128
+Error loading data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=4639867_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_YAYO_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257451_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257150_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11121397_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11122738_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_EZN_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_GEMT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_MLAZ_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CLDR_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed
+Epoch 1/10 - Loss: 98291.4606
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_YAYO_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11122738_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_EZN_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CLDR_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_MLAZ_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=4639867_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11121397_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_GEMT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257451_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257150_YLV_HH.mseed: all input arrays must have the same shape
+Epoch 2/10 - Loss: 79031.1893
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_YAYO_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CLDR_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_GEMT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_EZN_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11121397_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11122738_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257150_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257451_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=4639867_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_MLAZ_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Epoch 3/10 - Loss: 58177.1485
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CLDR_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11122738_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_GEMT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_MLAZ_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_EZN_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=4639867_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11121397_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257150_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257451_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_YAYO_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_YLV_HH.mseed: all input arrays must have the same shape
+Epoch 4/10 - Loss: 42834.5192
+Error loading data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257150_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=4639867_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11122738_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257451_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_YAYO_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CLDR_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_GEMT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11121397_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_MLAZ_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_EZN_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed
+Epoch 5/10 - Loss: 33797.5930
+Error loading data/filtered_waveforms/HH/query?eventid=11121397_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_EZN_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11122738_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CLDR_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_MLAZ_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_YAYO_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257451_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257150_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=4639867_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_GEMT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed
+Epoch 6/10 - Loss: 28455.5289
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257451_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CLDR_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_EZN_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257150_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11122738_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_MLAZ_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_YAYO_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=4639867_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_GEMT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11121397_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed
+Epoch 7/10 - Loss: 24809.4697
+Error loading data/filtered_waveforms/HH/query?eventid=11122738_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_YAYO_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11121397_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_GEMT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CLDR_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_MLAZ_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=4639867_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_EZN_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257451_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257150_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed
+Epoch 8/10 - Loss: 22036.4227
+Error loading data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_YAYO_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CLDR_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_EZN_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=4639867_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11122738_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_GEMT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257451_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11121397_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257150_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_MLAZ_HH.mseed: all input arrays must have the same shape
+Epoch 9/10 - Loss: 19880.2455
+Error loading data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11693368_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KCTX_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11121397_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CLDR_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257150_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11431638_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_YAYO_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11845871_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_KRBG_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11633205_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11122738_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11315149_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_GEMT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11541654_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11774951_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11912391_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11796360_CTYL_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257451_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11525717_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed: Expected 3 traces, got 6 in data/filtered_waveforms/HH/query?eventid=11765426_EDC_HH.mseed
+Error loading data/filtered_waveforms/HH/query?eventid=10257402_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_MLAZ_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=4639867_ADVT_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10798223_YLV_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=11796360_EZN_HH.mseed: all input arrays must have the same shape
+Error loading data/filtered_waveforms/HH/query?eventid=10257782_ADVT_HH.mseed: all input arrays must have the same shape
+Epoch 10/10 - Loss: 18141.1562
