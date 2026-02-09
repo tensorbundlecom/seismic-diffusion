@@ -28,6 +28,25 @@ Deneyler sonucunda üretilen karşılaştırmalı grafikler, dalga formu yığı
 
 ---
 
+## 🌍 OOD (Out-of-Distribution) Veri Seti Detayları
+
+Değerlendirmede kullanılan 10 adet KOERI depreminin teknik detayları:
+
+| Kod | Tarih | Saat | Enlem | Boylam | Derinlik (km) | Büyüklük (ML) | Bölge |
+| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| **OOD_K_01** | 2010.10.03 | 17:49:03 | 40.832 | 28.176 | 3.2 | 3.5 | Marmara Denizi |
+| **OOD_K_02** | 2010.10.04 | 17:01:47 | 40.177 | 27.678 | 12.0 | 2.5 | Marmara Bölgesi |
+| **OOD_K_03** | 2010.11.03 | 02:51:27 | 40.413 | 26.296 | 14.2 | 5.3 | Saros Körfezi |
+| **OOD_K_04** | 2010.12.30 | 12:18:39 | 40.453 | 29.202 | 7.0 | 2.0 | Marmara Denizi |
+| **OOD_K_05** | 2011.07.25 | 17:57:22 | 40.824 | 27.747 | 12.2 | 5.1 | Marmara Denizi |
+| **OOD_K_06** | 2012.02.18 | 02:21:38 | 40.458 | 26.381 | 14.5 | 2.6 | Çanakkale |
+| **OOD_K_07** | 2012.05.04 | 05:38:14 | 40.313 | 27.006 | 7.2 | 4.4 | Marmara Bölgesi |
+| **OOD_K_08** | 2013.04.09 | 11:42:24 | 40.539 | 28.135 | 5.0 | 3.4 | Marmara Denizi |
+| **OOD_K_09** | 2013.08.29 | 06:20:36 | 40.347 | 27.457 | 17.4 | 4.4 | Marmara Bölgesi |
+| **OOD_K_10** | 2013.12.05 | 01:09:25 | 40.831 | 27.925 | 8.9 | 2.2 | Marmara Denizi |
+
+---
+
 ## 📊 Model Performans Karşılaştırması (10 Diverse KOERI OOD)
 
 Eğitim setinde bulunmayan (2010-2013) ve Marmara bölgesinden seçilen 10 farklı deprem (M2.0 - M5.3) üzerindeki güncel sonuçlar:
