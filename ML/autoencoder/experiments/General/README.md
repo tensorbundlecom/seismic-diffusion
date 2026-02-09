@@ -34,13 +34,13 @@ Eğitim setinde bulunmayan (2010-2013) ve Marmara bölgesinden seçilen 10 farkl
 
 | Model | SSIM ↑ | LSD ↓ | Arias Err ↓ | Env Corr ↑ | DTW ↓ | XCorr ↑ |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Baseline CVAE** | 0.7046 | **3.493** | 1.0000 | 0.3628 | **11196.62** | 0.1898 |
-| **Full Covariance** | 0.6437 | 3.574 | 1.0000 | 0.3389 | 11200.22 | **0.2257** |
-| **Normalizing Flow** | **0.7124** | 3.668 | **1.0000** | **0.3717** | 11203.56 | 0.2034 |
+| **Baseline CVAE** | 0.7046 | 3.493 | 0.4518 | 0.3678 | 10283.06 | 0.2139 |
+| **Full Covariance** | 0.6437 | 3.574 | **0.4150** | 0.3439 | 11943.60 | **0.2276** |
+| **Normalizing Flow** | **0.7124** | 3.668 | 0.4446 | **0.3661** | **9779.05** | 0.2159 |
 
 **Gözlemler:**
-- **Normalizing Flow**: Spektrogram yapısal benzerliğinde (SSIM) en yüksek skoru alarak karmaşık sismik sinyalleri en iyi temsil eden model olmuştur.
-- **Baseline CVAE**: Spektral mesafe (LSD) ve zaman hizalamasında (DTW) bu veri setinde beklenenden daha yüksek doğruluk sergilemiştir.
-- **Full Covariance**: Maksimum çapraz korelasyon (XCorr) skorunda faz uyumunu en iyi yakalayan modeldir.
+- **Enerji Sadakati (Arias Err)**: Yenilenen rekonstrüksiyon yöntemiyle (Scipy-based GL) enerji hatası 1.0 (tam kayıp) seviyesinden makul seviyelere (~0.45) çekildi. En iyi enerji korunumunu **Full Covariance** modeli sağladı.
+- **Normalizing Flow**: Spektrogram yapısal benzerliğinde (SSIM) ve zamansal hizalamada (DTW) liderliğini koruyarak en "doğal" sismogramları üreten model oldu.
+- **Full Covariance**: Maksimum çapraz korelasyon (XCorr) ve Arias hatasında en iyi sonuçları vererek sinyal gücünü ve fazını en iyi koruyan modeldir.
 
 *Not: Tüm testler eğitim verisiyle uyumlu olması için **100Hz** örnekleme hızında yapılmıştır.*

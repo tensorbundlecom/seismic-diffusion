@@ -21,12 +21,36 @@ from ML.autoencoder.experiments.General.core.model_baseline import ConditionalVa
 from ML.autoencoder.experiments.FullCovariance.core.model_full_cov import FullCovCVAE
 from ML.autoencoder.experiments.NormalizingFlow.core.model_flow import FlowCVAE
 
-def reconstruct_signal(magnitude_spec, mag_min=0.0, mag_max=1.0, nperseg=256, noverlap=192, n_iter=64):
+def reconstruct_signal(magnitude_spec, mag_min=0.0, mag_max=1.0, nperseg=256, noverlap=192, nfft=256, fs=100.0, n_iter=64):
+    """Griffin-Lim implementation using scipy.signal.stft/istft to ensure scaling consistency."""
     spec = magnitude_spec.copy()
     if mag_max > mag_min:
         spec = spec * (mag_max - mag_min) + mag_min
     spec = np.expm1(spec)
-    return librosa.griffinlim(spec, n_iter=n_iter, hop_length=nperseg - noverlap, win_length=nperseg, center=True)
+    
+    # Initialize with random phase
+    phase = np.exp(2j * np.pi * np.random.rand(*spec.shape))
+    
+    for i in range(n_iter):
+        stft_complex = spec * phase
+        _, waveform = signal.istft(stft_complex, fs=fs, nperseg=nperseg, noverlap=noverlap, nfft=nfft, boundary='zeros')
+        _, _, new_Zxx = signal.stft(waveform, fs=fs, nperseg=nperseg, noverlap=noverlap, nfft=nfft, boundary='zeros')
+        
+        # Match shapes if necessary
+        if new_Zxx.shape != spec.shape:
+            min_f = min(new_Zxx.shape[0], spec.shape[0])
+            min_t = min(new_Zxx.shape[1], spec.shape[1])
+            phase_angle = np.angle(new_Zxx[:min_f, :min_t])
+            # Use same shape as spec
+            new_phase = np.zeros_like(spec, dtype=complex)
+            new_phase[:min_f, :min_t] = np.exp(1j * phase_angle)
+            phase = new_phase
+        else:
+            phase = np.exp(1j * np.angle(new_Zxx))
+            
+    stft_complex = spec * phase
+    _, waveform = signal.istft(stft_complex, fs=fs, nperseg=nperseg, noverlap=noverlap, nfft=nfft, boundary='zeros')
+    return waveform
 
 def calculate_seismic_metrics(target_wav, pred_wav, target_spec, pred_spec):
     """Calculate all sismolojik metrikleri"""
@@ -179,10 +203,10 @@ def main():
                 fc_spec = r_fc[0, 2].cpu().numpy()
                 flow_spec = r_flow[0, 2].cpu().numpy()
                 
-                # mag_min/max should ideally come from the specific sample
-                wav_base = reconstruct_signal(base_spec, mag_min, mag_max)
-                wav_fc = reconstruct_signal(fc_spec, mag_min, mag_max)
-                wav_flow = reconstruct_signal(flow_spec, mag_min, mag_max)
+                # Use Scipy-based reconstruction with exact parameters
+                wav_base = reconstruct_signal(base_spec, mag_min, mag_max, nperseg=256, noverlap=192, fs=TARGET_FS)
+                wav_fc = reconstruct_signal(fc_spec, mag_min, mag_max, nperseg=256, noverlap=192, fs=TARGET_FS)
+                wav_flow = reconstruct_signal(flow_spec, mag_min, mag_max, nperseg=256, noverlap=192, fs=TARGET_FS)
                 
                 # Calculate metrics (ensure lengths match)
                 min_len = min(len(gt_wav), len(wav_base), len(wav_fc), len(wav_flow))
