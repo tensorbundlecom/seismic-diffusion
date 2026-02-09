@@ -4,13 +4,10 @@ Bu klasör, sismik veriler üzerinde "Full Covariance" (Tam Kovaryans) matrisi k
 
 ## 📂 Klasör Yapısı
 
-- `core/`: Model mimarisi (`FullCovCVAE`) ve özel kayıp fonksiyonları (`loss_utils`).
-- `training/`: Eğitim scriptleri ve hiperparametre ayarları.
-- `evaluation/`: Eğitilmiş modelin sismik metriklerle (SSIM, LSD, DTW vb.) ve OOD (Out-of-Distribution) verileriyle testi.
-- `simulation/`: Hiç yaşanmamış sismik senaryoların (Örn: Adalar M5.0) üretilmesi.
-- `setup/`: Tarihsel OOD verilerinin IRIS/KOERI üzerinden indirilmesi ve ön işleme süreçleri.
-- `results/`: Üretilen spektrogramlar, interaktif Plotly raporları ve CSV çıktıları.
-- `utils_debug/`: Geliştirme sürecindeki analiz ve hata ayıklama kodları.
+- `core/`: Deneye özel model mimarisi (`FullCovCVAE`) ve kayıt fonksiyonları (`loss_utils.py`). **Önemli**: Temel model ve veri yükleyici artık `General/core` üzerinden çekilmektedir.
+- `training/`: Full Covariance modeline özel eğitim scriptleri.
+- `evaluation/`: Model analizi ve OOD testleri.
+- `results/`: Üretilen spektrogramlar ve CSV çıktıları.
 
 ## 🚀 Temel Özellikler
 
@@ -32,6 +29,3 @@ Scriptler, proje kök dizininden (root) veya kendi klasörlerinden `sys.path` d�
 ```bash
 python ML/autoencoder/experiments/FullCovariance/simulation/simulate_synthetic_event.py
 ```
-
----
-*Hazırlayan: Antigravity AI Assistant*

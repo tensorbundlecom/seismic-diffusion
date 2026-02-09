@@ -3,8 +3,11 @@ import torch.nn as nn
 import sys
 import os
 
-# Import from fixed baseline model in the same directory
-from ..core.model_baseline_fixed import Decoder, CVAEEncoder
+# Add path to project root
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../../')))
+
+# Import from fixed baseline model using absolute paths
+from ML.autoencoder.experiments.General.core.model_baseline import Decoder, CVAEEncoder
 
 class FullCovCVAEEncoder(nn.Module):
     """
@@ -78,7 +81,7 @@ class FullCovCVAE(nn.Module):
         
         self.encoder = FullCovCVAEEncoder(in_channels, latent_dim, num_stations, condition_dim)
         # Use existing Decoder but projected from latent_dim + condition_dim
-        from ..core.model_baseline_fixed import CVAEDecoder
+        from ML.autoencoder.experiments.General.core.model_baseline import CVAEDecoder
         self.decoder = CVAEDecoder(in_channels, latent_dim, num_stations, condition_dim)
         
         self.latent_dim = latent_dim
