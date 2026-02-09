@@ -3,22 +3,24 @@
 Bu dizin, `kalem_seismic` projesindeki tüm oto-kodlayıcı deneyleri için ortak çekirdek mantığı, veri çekme araçlarını ve genel değerlendirme scriptlerini barındıran merkezi yönetim birimidir.
 
 ## 📦 Klasör Yapısı
+### 📂 Directory Structure
 
-### 1. `core/` (Merkezi Çekirdek)
-Tüm deneylerin (FullCovariance, NormalizingFlow vb.) bağımlı olduğu temel dosyalar burada yer alır.
-- `stft_dataset.py`: Tüm deneyler için standartlaştırılmış veri yükleyici (100Hz desteği, OOD_K normalizasyonu).
-- `model_baseline.py`: Standart Conditional Variational Autoencoder (CVAE) mimarisi.
+#### `General/core`
+Shared logic for all models.
+- `stft_dataset.py`: Unified STFT dataset loader (handles both HH and BH)
+- `model_baseline.py`: Base CVAE architecture (Encoder/Decoder)
 
-### 2. `setup/` (Veri Hazırlama)
-Sismik verilerin (IRIS/KOERI) indirilmesi, filtrelenmesi ve önişlenmesi için kullanılan konsolide edilmiş araçlar.
-- `download_koeri_ood.py`: KOERI üzerinden OOD verisi çekme scripti.
-- `preprocess_koeri_ood.py`: Resampling (100Hz) ve bandpass filtreleme araçları.
+#### `General/setup`
+Data preparation scripts.
+- `download_post_training_ood.py`: Downloads 10 diverse HH channel events (2022-2024)
+- `preprocess_post_training_ood.py`: Preprocessing pipeline (100Hz, 0.5-45Hz)
+- `archive/`: Older setup scripts (including initial BH channel attemps)
 
-### 3. `evaluation/` (Değerlendirme)
-Modellerin performansını karşılaştırmak için kullanılan genel araçlar.
-- `evaluate_diverse_ood.py`: 10 farklı OOD depremi üzerinden modelleri yarıştıran ana script.
-- `calculate_seismic_metrics.py`: SSIM, LSD, Arias, DTW gibi sismolojik metrik hesaplamaları.
-- `archive/`: Kullanım ömrünü tamamlamış eski görselleştirme ve test scriptleri.
+#### `General/evaluation`
+Evaluation tools.
+- `evaluate_post_training_ood.py`: **Main evaluation script** (HH OOD)
+- `evaluate_diverse_ood.py`: Comparison script (Reference)
+- `archive/`: Deprecated debugging and analysis tools
 
 ### 4. `checkpoints/`
 Eğitilmiş model ağırlıklarının (Best-case) saklandığı dizin.
@@ -30,36 +32,37 @@ Deneyler sonucunda üretilen karşılaştırmalı grafikler, dalga formu yığı
 
 ## 🌍 OOD (Out-of-Distribution) Veri Seti Detayları
 
-Değerlendirmede kullanılan 10 adet KOERI depreminin teknik detayları:
+**Post-Training HH Channel Dataset** (2022-2024) - Eğitim sonrası dönemden, enstrüman uyumlu (HH kanalları) 10 deprem:
 
-| Kod | Tarih | Saat | Enlem | Boylam | Derinlik (km) | Büyüklük (ML) | Bölge |
+| Kod | Tarih | Saat | Enlem | Boylam | Derinlik (km) | Büyüklük | Bölge |
 | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
-| **OOD_K_01** | 2010.10.03 | 17:49:03 | 40.832 | 28.176 | 3.2 | 3.5 | Marmara Denizi |
-| **OOD_K_02** | 2010.10.04 | 17:01:47 | 40.177 | 27.678 | 12.0 | 2.5 | Marmara Bölgesi |
-| **OOD_K_03** | 2010.11.03 | 02:51:27 | 40.413 | 26.296 | 14.2 | 5.3 | Saros Körfezi |
-| **OOD_K_04** | 2010.12.30 | 12:18:39 | 40.453 | 29.202 | 7.0 | 2.0 | Marmara Denizi |
-| **OOD_K_05** | 2011.07.25 | 17:57:22 | 40.824 | 27.747 | 12.2 | 5.1 | Marmara Denizi |
-| **OOD_K_06** | 2012.02.18 | 02:21:38 | 40.458 | 26.381 | 14.5 | 2.6 | Çanakkale |
-| **OOD_K_07** | 2012.05.04 | 05:38:14 | 40.313 | 27.006 | 7.2 | 4.4 | Marmara Bölgesi |
-| **OOD_K_08** | 2013.04.09 | 11:42:24 | 40.539 | 28.135 | 5.0 | 3.4 | Marmara Denizi |
-| **OOD_K_09** | 2013.08.29 | 06:20:36 | 40.347 | 27.457 | 17.4 | 4.4 | Marmara Bölgesi |
-| **OOD_K_10** | 2013.12.05 | 01:09:25 | 40.831 | 27.925 | 8.9 | 2.2 | Marmara Denizi |
+| **OOD_POST_01** | 2022.07.21 | 15:44:25 | 40.143 | 27.387 | 24.4 | M4.3 | Marmara Bölgesi |
+| **OOD_POST_02** | 2022.12.13 | 03:21:17 | 40.352 | 27.026 | 10.0 | M4.2 | Marmara Bölgesi |
+| **OOD_POST_03** | 2023.05.04 | 01:50:01 | 40.431 | 26.225 | 10.0 | M4.2 | Saros Körfezi |
+| **OOD_POST_04** | 2023.11.07 | 20:05:47 | 40.497 | 27.531 | 11.8 | M4.1 | Marmara Bölgesi |
+| **OOD_POST_05** | 2023.12.04 | 07:42:19 | 40.438 | 28.856 | 6.5 | M5.1 | Marmara Denizi |
+| **OOD_POST_06** | 2023.12.17 | 20:53:53 | 40.730 | 29.059 | 12.4 | M4.2 | Marmara Denizi |
+| **OOD_POST_07** | 2024.01.27 | 03:17:35 | 40.516 | 28.812 | 10.0 | M3.0 | Marmara Denizi |
+| **OOD_POST_08** | 2024.02.27 | 13:09:54 | 40.297 | 26.977 | 12.0 | M4.2 | Marmara Bölgesi |
+| **OOD_POST_09** | 2024.05.26 | 21:38:19 | 40.818 | 28.308 | 15.1 | M3.3 | Marmara Denizi |
+| **OOD_POST_10** | 2024.12.12 | 11:34:52 | 40.459 | 26.168 | 10.0 | M4.2 | Saros Körfezi |
 
 ---
 
-## 📊 Model Performans Karşılaştırması (10 Diverse KOERI OOD)
+## 📊 Model Performans Karşılaştırması (Post-Training HH OOD)
 
-Eğitim setinde bulunmayan (2010-2013) ve Marmara bölgesinden seçilen 10 farklı deprem (M2.0 - M5.3) üzerindeki güncel sonuçlar:
+Eğitim sonrası dönemden (2022-2024) seçilen 10 deprem (M3.0-M5.1) üzerinde **HH kanalları** ile yapılan değerlendirme (56 waveform):
 
 | Model | SSIM ↑ | LSD ↓ | Arias Err ↓ | Env Corr ↑ | DTW ↓ | XCorr ↑ |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Baseline CVAE** | 0.7046 | 3.493 | 0.4518 | 0.3678 | 10283.06 | 0.2139 |
-| **Full Covariance** | 0.6437 | 3.574 | **0.4150** | 0.3439 | 11943.60 | **0.2276** |
-| **Normalizing Flow** | **0.7124** | 3.668 | 0.4446 | **0.3661** | **9779.05** | 0.2159 |
+| **Baseline CVAE** | 0.6185 | 1.91 | 0.43 | 0.3797 | 6744.15 | **0.1805** |
+| **Full Covariance** | 0.5905 | **1.73** | **0.41** | 0.3632 | 7244.12 | 0.1748 |
+| **Normalizing Flow** | **0.6185** | 1.95 | 0.45 | **0.3940** | **6520.18** | 0.1826 |
 
 **Gözlemler:**
-- **Enerji Sadakati (Arias Err)**: Yenilenen rekonstrüksiyon yöntemiyle (Scipy-based GL) enerji hatası 1.0 (tam kayıp) seviyesinden makul seviyelere (~0.45) çekildi. En iyi enerji korunumunu **Full Covariance** modeli sağladı.
-- **Normalizing Flow**: Spektrogram yapısal benzerliğinde (SSIM) ve zamansal hizalamada (DTW) liderliğini koruyarak en "doğal" sismogramları üreten model oldu.
-- **Full Covariance**: Maksimum çapraz korelasyon (XCorr) ve Arias hatasında en iyi sonuçları vererek sinyal gücünü ve fazını en iyi koruyan modeldir.
+- **Enstrüman Uyumu**: HH kanalları kullanılarak yapılan bu değerlendirme, eğitim dataseti ile tam uyumlu olduğu için geçerli bir OOD testidir.
+- **Normalizing Flow**: Spektrogram yapısal benzerliğinde (SSIM) ve zarf korelasyonunda (Env Corr) en iyi performansı göstererek en "doğal" sismogramları üreten model olmuştur.
+- **Full Covariance**: Spektral mesafe (LSD) ve enerji korunumunda (Arias Err) liderliğini sürdürerek fiziksel doğruluğu en iyi koruyan modeldir.
+- **DTW Skorları**: Tüm modeller zamansal hizalamada BH testlerine göre çok daha iyi performans gösterdi, bu da enstrüman uyumunun önemini doğruluyor.
 
 *Not: Tüm testler eğitim verisiyle uyumlu olması için **100Hz** örnekleme hızında yapılmıştır.*

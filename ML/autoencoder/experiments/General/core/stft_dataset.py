@@ -199,7 +199,7 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
         """
         name = Path(filename).stem
         parts = name.split('_')
-        if len(parts) >= 3 and parts[0] == "OOD" and parts[1] == "K":
+        if len(parts) >= 3 and parts[0] == "OOD" and (parts[1] == "K" or parts[1] == "POST"):
             return f"{parts[0]}_{parts[1]}_{parts[2]}"
         if len(parts) >= 2 and parts[0] == "OOD":
             # Normalize OOD IDs: OOD_4 or OOD_04 -> OOD_04
