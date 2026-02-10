@@ -55,9 +55,9 @@ Eğitim sonrası dönemden (2022-2024) seçilen 10 deprem (M3.0-M5.1) üzerinde 
 
 | Model | SSIM ↑ | LSD ↓ | Arias Err ↓ | Env Corr ↑ | DTW ↓ | XCorr ↑ |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Baseline CVAE** | 0.6185 | 1.91 | 0.43 | 0.3797 | 6744.15 | **0.1805** |
-| **Full Covariance** | 0.5905 | **1.73** | **0.41** | 0.3632 | 7244.12 | 0.1748 |
-| **Normalizing Flow** | **0.6185** | 1.95 | 0.45 | **0.3940** | **6520.18** | 0.1826 |
+| **Baseline CVAE** | **0.6153** | 2.02 | 0.47 | **0.3849** | **6241.27** | **0.1800** |
+| **Full Covariance** | 0.5939 | **1.88** | **0.43** | 0.3581 | 6572.99 | 0.1798 |
+| **Normalizing Flow** | 0.5980 | 2.11 | **0.43** | 0.3809 | 6826.81 | 0.1777 |
 
 **Gözlemler:**
 - **Enstrüman Uyumu**: HH kanalları kullanılarak yapılan bu değerlendirme, eğitim dataseti ile tam uyumlu olduğu için geçerli bir OOD testidir.
