@@ -254,6 +254,7 @@ def main():
                 
                 # Save visualizations
                 os.makedirs(f"{output_dir}/specs", exist_ok=True)
+                os.makedirs(f"{output_dir}/specs/fas", exist_ok=True)
                 os.makedirs(f"{output_dir}/waveforms", exist_ok=True)
                 
                 # Spectrogram comparison
@@ -268,6 +269,31 @@ def main():
                 axes[1, 1].set_title(f'Flow (SSIM: {m_flow["ssim"]:.3f})')
                 plt.tight_layout()
                 plt.savefig(f"{output_dir}/specs/{event_id}_{station_name}_specs.png", dpi=150, bbox_inches='tight')
+                plt.close()
+                
+                # FAS (Fourier Amplitude Spectrum) comparison
+                def get_fas(sig, fs=100.0):
+                    n = len(sig)
+                    freqs = np.fft.rfftfreq(n, d=1/fs)
+                    fas = np.abs(np.fft.rfft(sig))
+                    return freqs, fas
+
+                f0, fas0 = get_fas(gt_wav[:min_len], fs=TARGET_FS)
+                fb, fasb = get_fas(wav_base[:min_len], fs=TARGET_FS)
+                ffc, fasfc = get_fas(wav_fc[:min_len], fs=TARGET_FS)
+                ffl, fasfl = get_fas(wav_flow[:min_len], fs=TARGET_FS)
+
+                plt.figure(figsize=(10, 6))
+                plt.loglog(f0, fas0, 'k', alpha=0.5, label='Original', linewidth=1.2)
+                plt.loglog(fb, fasb, 'b', alpha=0.7, label=f'Baseline (LSD: {m_base["lsd"]:.2f})', linewidth=0.8)
+                plt.loglog(ffc, fasfc, 'g', alpha=0.7, label=f'FullCov (LSD: {m_fc["lsd"]:.2f})', linewidth=0.8)
+                plt.loglog(ffl, fasfl, 'r', alpha=0.7, label=f'Flow (LSD: {m_flow["lsd"]:.2f})', linewidth=0.8)
+                plt.grid(True, which="both", ls="-", alpha=0.3)
+                plt.xlabel('Frequency (Hz)')
+                plt.ylabel('Amplitude')
+                plt.title(f'Fourier Amplitude Spectrum - {event_id} @ {station_name}')
+                plt.legend()
+                plt.savefig(f"{output_dir}/specs/fas/{event_id}_{station_name}_fas.png", dpi=150, bbox_inches='tight')
                 plt.close()
                 
                 # Waveform comparison
