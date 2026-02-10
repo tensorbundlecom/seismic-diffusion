@@ -53,11 +53,11 @@ Deneyler sonucunda üretilen karşılaştırmalı grafikler, dalga formu yığı
 
 Eğitim sonrası dönemden (2022-2024) seçilen 10 deprem (M3.0-M5.1) üzerinde **HH kanalları** ile yapılan değerlendirme (56 waveform):
 
-| Model | SSIM ↑ | LSD ↓ | Arias Err ↓ | Env Corr ↑ | DTW ↓ | XCorr ↑ |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Baseline CVAE** | **0.6153** | 2.02 | 0.47 | **0.3849** | **6241.27** | **0.1800** |
-| **Full Covariance** | 0.5939 | **1.88** | **0.43** | 0.3581 | 6572.99 | 0.1798 |
-| **Normalizing Flow** | 0.5980 | 2.11 | **0.43** | 0.3809 | 6826.81 | 0.1777 |
+| Model | SSIM ↑ | S-Corr ↑ | SC ↓ | STA/LTA Err ↓ | LSD ↓ | MR-LSD ↓ | Arias Err ↓ | Env Corr ↑ | DTW ↓ |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Baseline CVAE** | **0.6153** | 0.9399 | 0.262 | 0.069 | 2.02 | **1.65** | 0.47 | 0.3759 | **6615.67** |
+| **Full Covariance** | 0.5939 | 0.9333 | 0.279 | 0.076 | **1.88** | 1.77 | **0.43** | 0.3551 | 7110.65 |
+| **Normalizing Flow** | 0.5980 | **0.9458** | **0.247** | **0.054** | 2.11 | 2.11 | **0.43** | **0.3815** | 6742.01 |
 
 **Gözlemler:**
 - **Enstrüman Uyumu**: HH kanalları kullanılarak yapılan bu değerlendirme, eğitim dataseti ile tam uyumlu olduğu için geçerli bir OOD testidir.

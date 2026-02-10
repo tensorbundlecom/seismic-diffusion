@@ -48,39 +48,84 @@ def reconstruct_signal(magnitude_spec, mag_min=0.0, mag_max=1.0, nperseg=256, no
     _, waveform = signal.istft(stft_complex, fs=fs, nperseg=nperseg, noverlap=noverlap, nfft=nfft, boundary='zeros')
     return waveform
 
-def calculate_seismic_metrics(target_wav, pred_wav, target_spec, pred_spec):
-    """Calculate all seismic metrics."""
+def calculate_seismic_metrics(target_wav, pred_wav, target_spec, pred_spec, fs=100.0):
+    """Calculate all seismic and spectral metrics."""
     metrics = {}
     
-    # 1. SSIM
+    # --- 1. STFT-Level Metrics (Deterministic) ---
+    
+    # 1.1 SSIM (Structural Similarity)
     s1 = (target_spec - np.min(target_spec)) / (np.max(target_spec) - np.min(target_spec) + 1e-8)
     s2 = (pred_spec - np.min(pred_spec)) / (np.max(pred_spec) - np.min(pred_spec) + 1e-8)
     metrics['ssim'] = ssim(s1, s2, data_range=1.0)
     
-    # 2. LSD
+    # 1.2 LSD (Log-Spectral Distance)
     metrics['lsd'] = np.sqrt(np.mean((np.log(target_spec + 1e-8) - np.log(pred_spec + 1e-8))**2))
     
-    # 3. Arias Intensity Error
+    # 1.3 Spectral Convergence (SC)
+    # Norm of diff / Norm of target
+    metrics['sc'] = np.linalg.norm(target_spec - pred_spec) / (np.linalg.norm(target_spec) + 1e-8)
+    
+    # 1.4 Spectral Correlation (S-Corr)
+    metrics['s_corr'] = np.corrcoef(target_spec.flatten(), pred_spec.flatten())[0, 1]
+    
+    # 1.5 Spectral STA/LTA Error
+    # STA/LTA on spectral power (sum across frequencies)
+    spec_power_target = np.sum(target_spec, axis=0)
+    spec_power_pred = np.sum(pred_spec, axis=0)
+    
+    def get_spectral_sta_lta(power, sta_len=5, lta_len=40):
+        sta = np.convolve(power, np.ones(sta_len)/sta_len, mode='same')
+        lta = np.convolve(power, np.ones(lta_len)/lta_len, mode='same')
+        return sta / (lta + 1e-8)
+    
+    sl_target = get_spectral_sta_lta(spec_power_target)
+    sl_pred = get_spectral_sta_lta(spec_power_pred)
+    metrics['sta_lta_err'] = np.abs(np.max(sl_target) - np.max(sl_pred)) / (np.max(sl_target) + 1e-8)
+
+    # 1.6 Multi-Resolution STFT (STFT-MR)
+    # Average LSD across different window sizes
+    mr_lsd = []
+    for n_fft in [64, 128, 512]:
+        hop = n_fft // 4
+        _, _, Z1 = signal.stft(target_wav, fs=fs, nperseg=n_fft, noverlap=n_fft-hop)
+        _, _, Z2 = signal.stft(pred_wav, fs=fs, nperseg=n_fft, noverlap=n_fft-hop)
+        T_spec = np.abs(Z1)
+        P_spec = np.abs(Z2)
+        min_f = min(T_spec.shape[0], P_spec.shape[0])
+        min_t = min(T_spec.shape[1], P_spec.shape[1])
+        mr_lsd.append(np.sqrt(np.mean((np.log(T_spec[:min_f, :min_t] + 1e-8) - np.log(P_spec[:min_f, :min_t] + 1e-8))**2)))
+    metrics['mr_lsd'] = np.mean(mr_lsd)
+
+    # --- 2. Waveform-Level Metrics (Stochastic due to Griffin-Lim) ---
+    
+    # 2.1 Arias Intensity Error
     def get_arias(sig):
-        return (np.pi / (2 * 9.81)) * np.trapz(sig**2, dx=0.01)
+        # Using trapezoid (scipy 1.10+) or trapz (older)
+        try:
+            from scipy.integrate import trapezoid
+            return (np.pi / (2 * 9.81)) * trapezoid(sig**2, dx=1/fs)
+        except ImportError:
+            return (np.pi / (2 * 9.81)) * np.trapz(sig**2, dx=1/fs)
+            
     a_target = get_arias(target_wav)
     a_pred = get_arias(pred_wav)
     metrics['arias_err'] = np.abs(a_target - a_pred) / (np.abs(a_target) + 1e-8)
     
-    # 4. Env Correlation
+    # 2.2 Env Correlation
     e1 = np.abs(hilbert(target_wav))
     e2 = np.abs(hilbert(pred_wav))
     min_len = min(len(e1), len(e2))
     metrics['env_corr'] = np.corrcoef(e1[:min_len], e2[:min_len])[0, 1]
     
-    # 5. DTW
+    # 2.3 DTW
     factor = max(1, len(target_wav) // 500)
     s1 = target_wav[::factor].reshape(-1, 1)
     s2 = pred_wav[::factor].reshape(-1, 1)
     dist, _ = fastdtw(s1, s2, dist=euclidean)
     metrics['dtw'] = dist / len(s1)
     
-    # 6. XCorr
+    # 2.4 XCorr
     s1 = (target_wav - np.mean(target_wav)) / (np.std(target_wav) + 1e-8)
     s2 = (pred_wav - np.mean(pred_wav)) / (np.std(pred_wav) + 1e-8)
     min_len = min(len(s1), len(s2))
@@ -131,7 +176,7 @@ def main():
     
     print(f"Loaded {len(dataset)} HH OOD waveform files (post-training 2022-2024).")
     
-    metric_keys = ['ssim', 'lsd', 'arias_err', 'env_corr', 'dtw', 'xcorr']
+    metric_keys = ['ssim', 'lsd', 'sc', 's_corr', 'sta_lta_err', 'mr_lsd', 'arias_err', 'env_corr', 'dtw', 'xcorr']
     results = {m: {k: [] for k in metric_keys} for m in ['Baseline', 'FullCov', 'Flow']}
     
     TARGET_FS = 100.0
@@ -198,9 +243,9 @@ def main():
                 
                 # Calculate metrics
                 min_len = min(len(gt_wav), len(wav_base), len(wav_fc), len(wav_flow))
-                m_base = calculate_seismic_metrics(gt_wav[:min_len], wav_base[:min_len], orig_spec, base_spec)
-                m_fc = calculate_seismic_metrics(gt_wav[:min_len], wav_fc[:min_len], orig_spec, fc_spec)
-                m_flow = calculate_seismic_metrics(gt_wav[:min_len], wav_flow[:min_len], orig_spec, flow_spec)
+                m_base = calculate_seismic_metrics(gt_wav[:min_len], wav_base[:min_len], orig_spec, base_spec, fs=TARGET_FS)
+                m_fc = calculate_seismic_metrics(gt_wav[:min_len], wav_fc[:min_len], orig_spec, fc_spec, fs=TARGET_FS)
+                m_flow = calculate_seismic_metrics(gt_wav[:min_len], wav_flow[:min_len], orig_spec, flow_spec, fs=TARGET_FS)
                 
                 for k in metric_keys:
                     results['Baseline'][k].append(m_base[k])
@@ -261,8 +306,8 @@ def main():
     print("\n" + "="*80)
     print("POST-TRAINING HH OOD SEISMIC METRICS SUMMARY (2022-2024)")
     print("="*80)
-    print("| Model | SSIM ↑ | LSD ↓ | Arias Err ↓ | Env Corr ↑ | DTW ↓ | XCorr ↑ |")
-    print("| :--- | :---: | :---: | :---: | :---: | :---: | :---: |")
+    print("| Model | SSIM ↑ | LSD ↓ | SC ↓ | S-Corr ↑ | STA/LTA Err ↓ | MR-LSD ↓ | Arias Err ↓ | Env Corr ↑ | DTW ↓ | XCorr ↑ |")
+    print("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |")
     
     for model_name in ['Baseline', 'FullCov', 'Flow']:
         row = f"| **{model_name}** |"
@@ -270,8 +315,10 @@ def main():
             vals = results[model_name][k]
             if len(vals) > 0:
                 avg = np.mean(vals)
-                if k in ['ssim', 'env_corr', 'xcorr']:
+                if k in ['ssim', 's_corr', 'env_corr', 'xcorr']:
                     row += f" {avg:.4f} |"
+                elif k in ['sc', 'sta_lta_err']:
+                    row += f" {avg:.3f} |"
                 else:
                     row += f" {avg:.2f} |"
             else:
