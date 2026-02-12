@@ -12,13 +12,15 @@ Shared logic for all models.
 
 #### `General/setup`
 Data preparation scripts.
-- `download_post_training_ood.py`: Downloads 10 diverse HH channel events (2022-2024)
-- `preprocess_post_training_ood.py`: Preprocessing pipeline (100Hz, 0.5-45Hz)
-- `archive/`: Older setup scripts (including initial BH channel attemps)
+- `download_post_training_ood_custom.py`: Downloads custom HH channel events (2022-2024) for a fixed station subset
+- `preprocess_post_training_ood_custom.py`: Preprocessing pipeline (100Hz, 0.5-45Hz)
+- `build_post_training_custom_ood_docs.py`: Builds event summary and station distance tables
+- `archive/`: Older setup scripts (including initial BH channel attempts)
 
 #### `General/evaluation`
 Evaluation tools.
-- `evaluate_post_training_ood.py`: **Main evaluation script** (HH OOD)
+- `evaluate_post_training_custom_ood_all_models.py`: **Main evaluation script** (custom HH OOD, all models)
+- `evaluate_post_training_ood.py`: Baseline/FullCov/Flow evaluator (HH OOD)
 - `evaluate_diverse_ood.py`: Comparison script (Reference)
 - `archive/`: Deprecated debugging and analysis tools
 
@@ -32,7 +34,7 @@ Deneyler sonucunda üretilen karşılaştırmalı grafikler, dalga formu yığı
 
 ## 🌍 OOD (Out-of-Distribution) Veri Seti Detayları
 
-**Post-Training HH Channel Dataset** (2022-2024) - Eğitim sonrası dönemden, enstrüman uyumlu (HH kanalları) 10 deprem:
+**Post-Training Custom HH Dataset** (2022-2024) - Eğitim sonrası dönemden, **HH kanalları** ve **6 sabit istasyon** (ADVT, ARMT, KCTX, YLV, GEML, GELI) ile oluşturulmuş özel OOD seti:
 
 | Kod | Tarih | Saat | Enlem | Boylam | Derinlik (km) | Büyüklük | Bölge |
 | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
@@ -49,20 +51,12 @@ Deneyler sonucunda üretilen karşılaştırmalı grafikler, dalga formu yığı
 
 ---
 
-## 📊 Model Performans Karşılaştırması (Post-Training HH OOD)
+## 📊 Model Performans Karşılaştırması (Post-Training Custom HH OOD)
 
-Eğitim sonrası dönemden (2022-2024) seçilen 10 deprem (M3.0-M5.1) üzerinde **HH kanalları** ile yapılan değerlendirme (56 waveform):
+Tüm modeller için güncel metrik özeti ve yorumlar:
+- `ML/autoencoder/experiments/General/setup/docs/post_training_custom_ood_metrics_summary.md`
 
-| Model | SSIM ↑ | S-Corr ↑ | SC ↓ | STA/LTA Err ↓ | LSD ↓ | MR-LSD ↓ | Arias Err ↓ | Env Corr ↑ | DTW ↓ |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Baseline CVAE** | **0.6153** | 0.9399 | 0.262 | 0.069 | 2.02 | **1.65** | 0.47 | 0.3759 | **6615.67** |
-| **Full Covariance** | 0.5939 | 0.9333 | 0.279 | 0.076 | **1.88** | 1.77 | **0.43** | 0.3551 | 7110.65 |
-| **Normalizing Flow** | 0.5980 | **0.9458** | **0.247** | **0.054** | 2.11 | 2.11 | **0.43** | **0.3815** | 6742.01 |
-
-**Gözlemler:**
-- **Enstrüman Uyumu**: HH kanalları kullanılarak yapılan bu değerlendirme, eğitim dataseti ile tam uyumlu olduğu için geçerli bir OOD testidir.
-- **Normalizing Flow**: Spektrogram yapısal benzerliğinde (SSIM) ve zarf korelasyonunda (Env Corr) en iyi performansı göstererek en "doğal" sismogramları üreten model olmuştur.
-- **Full Covariance**: Spektral mesafe (LSD) ve enerji korunumunda (Arias Err) liderliğini sürdürerek fiziksel doğruluğu en iyi koruyan modeldir.
-- **DTW Skorları**: Tüm modeller zamansal hizalamada BH testlerine göre çok daha iyi performans gösterdi, bu da enstrüman uyumunun önemini doğruluyor.
+Detaylı metrik JSON:
+- `ML/autoencoder/experiments/General/results/post_training_custom_ood_all_models_metrics.json`
 
 *Not: Tüm testler eğitim verisiyle uyumlu olması için **100Hz** örnekleme hızında yapılmıştır.*
