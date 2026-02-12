@@ -1,0 +1,32 @@
+{
+  "ADVT": {
+    "latitude": 40.4332,
+    "longitude": 29.7383,
+    "elevation_m": 193.0
+  },
+  "ARMT": {
+    "latitude": 40.5683,
+    "longitude": 28.866,
+    "elevation_m": 320.0
+  },
+  "KCTX": {
+    "latitude": 40.2626,
+    "longitude": 28.3353,
+    "elevation_m": 445.0
+  },
+  "YLV": {
+    "latitude": 40.5658,
+    "longitude": 29.3708,
+    "elevation_m": 879.0
+  },
+  "GEML": {
+    "latitude": 40.4646,
+    "longitude": 29.2116,
+    "elevation_m": 222.0
+  },
+  "GELI": {
+    "latitude": 40.398,
+    "longitude": 26.4742,
+    "elevation_m": 126.0
+  }
+}

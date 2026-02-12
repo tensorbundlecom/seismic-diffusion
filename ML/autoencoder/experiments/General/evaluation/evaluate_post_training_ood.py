@@ -1,3 +1,4 @@
+import argparse
 import torch
 import numpy as np
 import os
@@ -135,20 +136,42 @@ def calculate_seismic_metrics(target_wav, pred_wav, target_spec, pred_spec, fs=1
     return metrics
 
 def main():
+    parser = argparse.ArgumentParser(description='Evaluate post-training OOD (Baseline/FullCov/Flow).')
+    parser.add_argument('--ood_data_dir', default='data/ood_waveforms/post_training/filtered', help='OOD data root.')
+    parser.add_argument('--ood_catalog', default='data/events/ood_catalog_post_training.txt', help='OOD catalog path.')
+    parser.add_argument('--station_list_file', default='data/station_list_external_full.json', help='Station list JSON.')
+    parser.add_argument(
+        '--station_subset_file',
+        default=None,
+        help='Optional station subset JSON to filter evaluation (keeps full mapping for models).',
+    )
+    parser.add_argument(
+        '--output_dir',
+        default='ML/autoencoder/experiments/General/visualizations/post_training_ood_evaluation',
+        help='Output directory for visuals.',
+    )
+    parser.add_argument(
+        '--output_metrics',
+        default='ML/autoencoder/experiments/General/results/post_training_ood_metrics.json',
+        help='Output JSON metrics path.',
+    )
+    args = parser.parse_args()
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    output_dir = "ML/autoencoder/experiments/General/visualizations/post_training_ood_evaluation"
+    output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
     
     # Paths
     baseline_chk = "ML/autoencoder/experiments/General/checkpoints/baseline_external_best.pt"
     full_cov_chk = "ML/autoencoder/experiments/FullCovariance/checkpoints/full_cov_external_best.pt"
     flow_chk = "ML/autoencoder/experiments/NormalizingFlow/checkpoints/flow_external_best.pt"
-    station_list_file = "data/station_list_external_full.json"
-    ood_catalog = "data/events/ood_catalog_post_training.txt"
-    ood_data_dir = "data/ood_waveforms/post_training/filtered"
 
-    with open(station_list_file, 'r') as f:
+    with open(args.station_list_file, 'r') as f:
         station_list = json.load(f)
+    station_subset = None
+    if args.station_subset_file:
+        with open(args.station_subset_file, 'r') as f:
+            station_subset = set(json.load(f))
 
     # Models
     print("Loading models...")
@@ -167,8 +190,8 @@ def main():
 
     # Dataset
     dataset = SeismicSTFTDatasetWithMetadata(
-        data_dir=ood_data_dir,
-        event_file=ood_catalog,
+        data_dir=args.ood_data_dir,
+        event_file=args.ood_catalog,
         channels=['HH'],  # HH channels only
         magnitude_col='xM',
         station_list=station_list
@@ -197,6 +220,9 @@ def main():
                     event_id = meta['event_id']
                     station_name = station_list[station_idx.item()]
                 
+                if station_subset is not None and station_name not in station_subset:
+                    continue
+
                 print(f"Processing {event_id} at {station_name}...")
                 
                 st_gt = obspy.read(file_path)
@@ -332,6 +358,15 @@ def main():
     print("\n" + "="*80)
     print("POST-TRAINING HH OOD SEISMIC METRICS SUMMARY (2022-2024)")
     print("="*80)
+
+    metrics_out = {
+        model_name: {k: (float(np.mean(v)) if v else None) for k, v in metrics.items()}
+        for model_name, metrics in results.items()
+    }
+    os.makedirs(os.path.dirname(args.output_metrics), exist_ok=True)
+    with open(args.output_metrics, 'w') as f:
+        json.dump(metrics_out, f, indent=2)
+    print(f"[INFO] Metrics JSON saved to: {args.output_metrics}")
     print("| Model | SSIM ↑ | LSD ↓ | SC ↓ | S-Corr ↑ | STA/LTA Err ↓ | MR-LSD ↓ | Arias Err ↓ | Env Corr ↑ | DTW ↓ | XCorr ↑ |")
     print("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |")
     

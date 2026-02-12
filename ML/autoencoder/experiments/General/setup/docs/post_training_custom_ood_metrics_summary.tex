@@ -1,0 +1,43 @@
+% Post-Training Custom OOD (HH-only, 6 stations) Metrics Summary
+
+\begin{table}[ht]
+\centering
+\small
+\caption{Post-Training Custom OOD (HH-only, 6 stations) Metric Summary}
+\label{tab:post_training_custom_ood_metrics}
+\begin{tabular}{lcccccccccc}
+\hline
+Model & SSIM $\uparrow$ & LSD $\downarrow$ & SC $\downarrow$ & S-Corr $\uparrow$ & STA/LTA Err $\downarrow$ & MR-LSD $\downarrow$ & Arias Err $\downarrow$ & Env Corr $\uparrow$ & DTW $\downarrow$ & XCorr $\uparrow$ \\
+\hline
+Baseline   & 0.6349 & 2.2125 & 0.1911 & 0.9705 & 0.0639 & 1.6670 & 0.4170 & 0.5767 & 12099.4 & 0.2173 \\
+FullCov    & 0.6075 & 1.9000 & 0.2208 & 0.9607 & 0.0863 & 1.8479 & 0.4102 & 0.5728 & 11761.2 & 0.2112 \\
+Flow       & 0.6002 & 2.1242 & 0.1918 & 0.9701 & 0.0631 & 2.1857 & 0.3415 & 0.5812 & 11839.8 & 0.2154 \\
+WBaseline  & 0.6237 & 1.8123 & 0.1822 & 0.9731 & --     & --     & 0.3609 & 0.5951 & 11764.3 & 0.2118 \\
+WFullCov   & 0.6065 & 1.7589 & 0.2126 & 0.9639 & --     & --     & 0.5054 & 0.5685 & 11084.8 & 0.2094 \\
+WFlow      & 0.6221 & 1.8287 & 0.1991 & 0.9686 & --     & --     & 0.3093 & 0.5897 & 11864.4 & 0.2119 \\
+CVAE\_MRLoss & 0.5864 & 2.0513 & --     & --     & --     & --     & 0.4563 & 0.5814 & 12168.9 & 0.1935 \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{Metric Definitions}
+\begin{itemize}
+\item \textbf{SSIM (Structural Similarity):} Spectrogram structural similarity; higher is better.
+\item \textbf{LSD (Log-Spectral Distance):} Log-magnitude spectral distance; lower is better.
+\item \textbf{SC (Spectral Convergence):} Relative spectral mismatch; lower is better.
+\item \textbf{S-Corr (Spectral Correlation):} Correlation of spectral magnitude; higher is better.
+\item \textbf{STA/LTA Err:} Error in short/long-term energy ratio; lower is better (onset fidelity).
+\item \textbf{MR-LSD (Multi-Resolution LSD):} Average LSD over multiple STFT resolutions; lower is better.
+\item \textbf{Arias Err:} Error in Arias intensity (energy content); lower is better.
+\item \textbf{Env Corr:} Envelope correlation; higher is better (amplitude modulation similarity).
+\item \textbf{DTW:} Dynamic Time Warping distance; lower is better (temporal alignment).
+\item \textbf{XCorr:} Max cross-correlation; higher is better (phase/shape similarity).
+\end{itemize}
+
+\paragraph{Overall Interpretation}
+Baseline remains strong on SSIM and S-Corr, indicating stable global spectral structure. FullCov and WFullCov
+reduce LSD (better spectral fidelity), with WFullCov achieving the lowest LSD overall. WFlow provides the best
+Arias Err among W-variants, suggesting improved energy matching. DTW values are broadly similar; WFullCov shows
+the lowest DTW in this set. CVAE\_MRLoss underperforms on SSIM and XCorr relative to baselines, despite improved
+LSD compared to the vanilla Flow model. Overall, W-space variants improve spectral fidelity (LSD) and energy
+matching (Arias Err) at slight cost to SSIM, indicating a trade-off between structural similarity and spectral detail.

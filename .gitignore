@@ -9,3 +9,5 @@ checkpoints_cvae
 logs_cvae
 AGENTS.md
 logs/
+ML/autoencoder/experiments/**/visualizations/**/waveforms/
+ML/autoencoder/experiments/**/visualizations/**/specs/fas/
