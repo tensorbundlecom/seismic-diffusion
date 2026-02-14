@@ -4,7 +4,7 @@ An exploration of applying diffusion models to seismic waveform data from the Ma
 
 ## Data
 
-This project works with seismic waveform data from earthquake events in the Marmara Sea region of Turkey, spanning from 2014 to present. The data was sourced from Turkey's AFAD (Disaster and Emergency Management Presidency) seismic network.
+This project works with seismic waveform data from earthquake events in the Marmara Sea region of Turkey, spanning from 2014 to present. The data was sourced from Kandilli Observatory seismic network.
 
 ### Raw Data Collection
 
@@ -18,7 +18,7 @@ We collected three main types of raw data:
   - Signal-to-noise ratios (SNR)
   - Local magnitude estimates at each station
 
-- **Seismic Waveforms**: Three-component seismic recordings stored in miniSEED format, downloaded from AFAD's network. Each waveform file contains:
+- **Seismic Waveforms**: Three-component seismic recordings stored in miniSEED format, downloaded from Kandilli Observatory's network. Each waveform file contains:
   - Three channels of ground motion data (typically East-West, North-South, Vertical)
   - Sampling rates varying by instrument (HH, BH, EH, HN channel codes indicating different sample rates)
 
