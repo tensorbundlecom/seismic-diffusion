@@ -2,6 +2,17 @@
 
 An exploration of applying diffusion models to seismic waveform data from the Marmara region of Turkey.
 
+## Current Status (2026-02-17)
+
+For current experiment protocol and latest decision logs, use:
+
+- `ML/autoencoder/experiments/NonDiagonalRigid/README.md`
+- `ML/autoencoder/experiments/NonDiagonalRigid/protocol/decisions.md`
+- `ML/autoencoder/experiments/NonDiagonalRigid/protocol/minimum_evidence_framework.md`
+- `AGENTS.md` (high-level repo map)
+
+The rest of this file is historical project context (data + initial model background).
+
 ## Data
 
 This project works with seismic waveform data from earthquake events in the Marmara Sea region of Turkey, spanning from 2014 to present. The data was sourced from Turkey's AFAD (Disaster and Emergency Management Presidency) seismic network.

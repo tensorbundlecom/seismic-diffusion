@@ -1,0 +1,17 @@
+{
+  "feature_names": [
+    "magnitude",
+    "log_repi_km",
+    "depth_km"
+  ],
+  "mean": {
+    "magnitude": 2.045070006747664,
+    "log_repi_km": 4.039356161291362,
+    "depth_km": 9.90693460413906
+  },
+  "std": {
+    "magnitude": 0.5554816070081466,
+    "log_repi_km": 0.5884226867299046,
+    "depth_km": 4.363052205047522
+  }
+}

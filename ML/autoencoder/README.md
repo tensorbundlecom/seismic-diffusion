@@ -2,6 +2,17 @@
 
 This directory contains code for training a convolutional autoencoder on seismic waveform data converted to STFT spectrograms.
 
+## Status Note (2026-02-17)
+
+This document describes the legacy root autoencoder scripts.
+Current isolated experiment workflows are maintained under:
+
+- `ML/autoencoder/experiments/General/README.md`
+- `ML/autoencoder/experiments/NonDiagonel/README.md`
+- `ML/autoencoder/experiments/NonDiagonalRigid/README.md`
+
+Use experiment-level READMEs for the latest training/evaluation commands and protocol decisions.
+
 ## Files
 
 - `model.py`: Convolutional autoencoder architecture

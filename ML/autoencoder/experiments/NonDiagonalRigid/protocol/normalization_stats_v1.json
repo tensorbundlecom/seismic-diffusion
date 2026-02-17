@@ -1,0 +1,38 @@
+{
+  "version": "v1",
+  "status": "FROZEN",
+  "generated_at_utc": "2026-02-17T12:01:26.368732+00:00",
+  "source": {
+    "split_manifest": "ML/autoencoder/experiments/NonDiagonalRigid/protocol/frozen_splits_v1.json",
+    "train_file_count": 71385,
+    "features_full_order": [
+      "magnitude",
+      "log_repi_km",
+      "depth_km",
+      "sin_az",
+      "cos_az"
+    ],
+    "normalized_features": [
+      "magnitude",
+      "log_repi_km",
+      "depth_km"
+    ]
+  },
+  "features": {
+    "feature_names": [
+      "magnitude",
+      "log_repi_km",
+      "depth_km"
+    ],
+    "mean": {
+      "magnitude": 2.0481529733137207,
+      "log_repi_km": 4.0402985663561095,
+      "depth_km": 9.861482104083434
+    },
+    "std": {
+      "magnitude": 0.554076615749174,
+      "log_repi_km": 0.5891543816836311,
+      "depth_km": 4.380183414061626
+    }
+  }
+}

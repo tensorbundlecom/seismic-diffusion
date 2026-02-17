@@ -1,0 +1,2 @@
+run_name,status,model_family,policy,scale,seed,latent_dim,max_steps,best_or_last_step,best_or_last_val_loss,stop_reason
+rigid_policy_pilot_baseline_diag_width_only_sc1p0_ld128_s42,running_or_interrupted,baseline_diag,width_only,1.0,42,128,12000,2000,211.0886960827159,

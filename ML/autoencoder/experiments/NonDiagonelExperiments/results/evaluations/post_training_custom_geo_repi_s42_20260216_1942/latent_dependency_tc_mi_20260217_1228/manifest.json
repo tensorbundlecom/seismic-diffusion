@@ -1,0 +1,10 @@
+{
+  "timestamp_utc": "2026-02-17T10:14:30Z",
+  "device": "cuda",
+  "seed": 42,
+  "processed_samples": 52,
+  "skipped_samples": 0,
+  "num_rotations": 24,
+  "model_specs_json": "ML/autoencoder/experiments/NonDiagonel/results/model_family_specs_small_phase_20260217.json",
+  "ood_metrics_json": "ML/autoencoder/experiments/NonDiagonel/results/evaluations/post_training_custom_geo_repi_s42_20260216_1942/model_family_eval_small_phase_20260217_1216/metrics_aggregate.json"
+}

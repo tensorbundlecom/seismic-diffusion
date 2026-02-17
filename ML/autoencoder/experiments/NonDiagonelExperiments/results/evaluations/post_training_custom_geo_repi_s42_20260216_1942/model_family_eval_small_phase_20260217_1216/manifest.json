@@ -1,0 +1,41 @@
+{
+  "timestamp_utc": "2026-02-17T09:25:15Z",
+  "device": "cuda",
+  "seed": 42,
+  "griffin_lim_iters": 64,
+  "processed_samples": 52,
+  "skipped_samples": 0,
+  "model_specs_json": "ML/autoencoder/experiments/NonDiagonel/results/model_family_specs_small_phase_20260217.json",
+  "model_specs": [
+    {
+      "name": "BaselineGeo_large_ld128",
+      "type": "baseline_geo",
+      "checkpoint": "ML/autoencoder/experiments/NonDiagonel/checkpoints/baseline_geo_repi_external_s42_20260215_best.pt"
+    },
+    {
+      "name": "FullCovGeo_large_ld128",
+      "type": "fullcov_geo",
+      "checkpoint": "ML/autoencoder/experiments/NonDiagonel/checkpoints/fullcov_geo_repi_external_s42_20260215_best.pt"
+    },
+    {
+      "name": "BaselineGeo_small_ld128",
+      "type": "baseline_geo_small",
+      "checkpoint": "ML/autoencoder/experiments/NonDiagonel/checkpoints/baseline_geo_small_external_s42_e30_20260217_best.pt"
+    },
+    {
+      "name": "FullCovGeo_small_ld128",
+      "type": "fullcov_geo_small",
+      "checkpoint": "ML/autoencoder/experiments/NonDiagonel/checkpoints/fullcov_geo_small_external_s42_e30_20260217_r2_best.pt"
+    },
+    {
+      "name": "BaselineGeo_small_ld64",
+      "type": "baseline_geo_small",
+      "checkpoint": "ML/autoencoder/experiments/NonDiagonel/checkpoints/baseline_geo_small_ld64_external_s42_e30_20260217_r2_best.pt"
+    },
+    {
+      "name": "FullCovGeo_small_ld64",
+      "type": "fullcov_geo_small",
+      "checkpoint": "ML/autoencoder/experiments/NonDiagonel/checkpoints/fullcov_geo_small_ld64_external_s42_e30_20260217_r2_best.pt"
+    }
+  ]
+}

@@ -11,3 +11,12 @@ AGENTS.md
 logs/
 ML/autoencoder/experiments/**/visualizations/**/waveforms/
 ML/autoencoder/experiments/**/visualizations/**/specs/fas/
+ML/autoencoder/experiments/WAblation/logs/
+ML/autoencoder/experiments/NonDiagonelExperiments/logs/
+ML/autoencoder/experiments/NonDiagonalRigid/logs/
+ML/autoencoder/experiments/**/*.out
+ML/autoencoder/experiments/**/*.pid
+ML/autoencoder/experiments/**/__pycache__/*.pyc
+ML/autoencoder/experiments/NonDiagonelExperiments/results/**/per_sample*.jsonl
+ML/autoencoder/experiments/NonDiagonelExperiments/results/**/corr_*.npy
+ML/autoencoder/experiments/NonDiagonelExperiments/results/**/corr_stack.npy

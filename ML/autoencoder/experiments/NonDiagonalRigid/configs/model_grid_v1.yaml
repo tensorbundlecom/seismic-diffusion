@@ -1,0 +1,30 @@
+version: "v1"
+status: "FROZEN"
+generated_on: "2026-02-17"
+phase: "phase2_latent_sweep_after_policy_gate"
+
+model_families:
+  - baseline_diag
+  - fullcov
+
+backbones:
+  - large
+  - small
+
+latent_dims:
+  - 16
+  - 32
+  - 48
+  - 64
+  - 96
+  - 128
+  - 160
+
+seeds:
+  - 42
+  - 43
+  - 44
+
+notes:
+  - "Confirmatory V1 frozen latent grid."
+  - "Use only after Phase-1 shared backbone policy gate is closed."

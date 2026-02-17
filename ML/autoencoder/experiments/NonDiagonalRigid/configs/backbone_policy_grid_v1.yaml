@@ -1,0 +1,40 @@
+version: "v1"
+status: "FROZEN"
+generated_on: "2026-02-17"
+
+description: "Backbone shrinking policy matrix (Phase-1 before latent sweep)."
+
+policy_scope: "shared_across_families"
+
+model_families:
+  - baseline_diag
+  - fullcov
+
+policies:
+  - width_only
+  - depth_only
+  - hybrid
+
+scales:
+  - 1.00
+  - 0.75
+  - 0.50
+
+latent_fixed_for_policy_stage: 128
+sanity_check_latents:
+  - 96
+
+seeds:
+  - 42
+  - 43
+  - 44
+
+selection_rule:
+  primary: "Q_within_eps"
+  guardrails_required: true
+  tie_breaker_1: "lower_ODI"
+  tie_breaker_2: "smaller_model"
+
+notes:
+  - "Phase-1 output is one shared policy+scale for both families."
+  - "Extension-only optional midpoint scale is not part of V1 frozen grid."

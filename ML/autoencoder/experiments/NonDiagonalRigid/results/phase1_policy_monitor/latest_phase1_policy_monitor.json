@@ -1,0 +1,18 @@
+{
+  "generated_at_utc": "2026-02-17T12:49:09.523677+00:00",
+  "rows": [
+    {
+      "run_name": "rigid_policy_pilot_baseline_diag_width_only_sc1p0_ld128_s42",
+      "status": "running_or_interrupted",
+      "model_family": "baseline_diag",
+      "policy": "width_only",
+      "scale": 1.0,
+      "seed": 42,
+      "latent_dim": 128,
+      "max_steps": 12000,
+      "best_or_last_step": 2000,
+      "best_or_last_val_loss": 211.0886960827159,
+      "stop_reason": ""
+    }
+  ]
+}

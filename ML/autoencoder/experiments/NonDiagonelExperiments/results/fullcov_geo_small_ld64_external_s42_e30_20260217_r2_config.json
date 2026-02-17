@@ -1,0 +1,23 @@
+{
+  "run_name": "fullcov_geo_small_ld64_external_s42_e30_20260217_r2",
+  "model": "SmallGeoFullCovCVAE",
+  "backbone_scale": "small_24_48_96_192",
+  "device": "cuda",
+  "epochs": 30,
+  "batch_size": 32,
+  "num_workers": 8,
+  "lr": 0.0005,
+  "beta": 0.1,
+  "latent_dim": 64,
+  "condition_dim": 64,
+  "seed": 42,
+  "max_items": 0,
+  "station_coords_file": "ML/autoencoder/experiments/NonDiagonel/results/station_coords_external.json",
+  "condition_stats_file": "ML/autoencoder/experiments/NonDiagonel/results/condition_stats_external_seed42.json",
+  "dataset_size": 88921,
+  "train_size": 71136,
+  "val_size": 17785,
+  "num_stations": 46,
+  "save_optimizer": 0,
+  "save_epoch_every": 0
+}
