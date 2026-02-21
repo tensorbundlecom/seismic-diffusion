@@ -1,0 +1,30 @@
+{
+  "input_glob": "ML/autoencoder/experiments/LatentShapeVAE/results/*/latent_shape_summary.csv",
+  "matched_files": [
+    "ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_ood_event_stage2_beta0p1_logvarfix_10seeds_v2/latent_shape_summary.csv",
+    "ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_ood_event_stage2_beta0p1_logvarfix_compare_v1/latent_shape_summary.csv",
+    "ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_ood_event_stage2_beta0p1_seeds_v1/latent_shape_summary.csv",
+    "ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_ood_event_stage3_ld32_formats_v1/latent_shape_summary.csv",
+    "ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_ood_selected_beta0p1_s42/latent_shape_summary.csv",
+    "ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_test_20260218_181532/latent_shape_summary.csv",
+    "ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_test_20260219_175948/latent_shape_summary.csv",
+    "ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_test_stablev1_compare/latent_shape_summary.csv",
+    "ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_test_stage2_beta0p1_logvarfix_10seeds_v2/latent_shape_summary.csv",
+    "ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_test_stage2_beta0p1_logvarfix_compare_v1/latent_shape_summary.csv",
+    "ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_test_stage2_beta0p1_seeds_v1/latent_shape_summary.csv",
+    "ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_test_stage3_ld32_formats_v1/latent_shape_summary.csv"
+  ],
+  "n_input_rows": 61,
+  "n_dedup_rows": 54,
+  "splits": [
+    "ood_event",
+    "test"
+  ],
+  "outputs": {
+    "per_run_csv": "ML/autoencoder/experiments/LatentShapeVAE/results/n01_similarity_v1/n01_similarity_per_run_split.csv",
+    "ranking_md": [
+      "ML/autoencoder/experiments/LatentShapeVAE/results/n01_similarity_v1/n01_similarity_ranking_ood_event.md",
+      "ML/autoencoder/experiments/LatentShapeVAE/results/n01_similarity_v1/n01_similarity_ranking_test.md"
+    ]
+  }
+}

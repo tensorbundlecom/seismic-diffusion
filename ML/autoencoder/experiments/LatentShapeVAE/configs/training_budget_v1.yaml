@@ -1,0 +1,21 @@
+version: "v1"
+status: "FROZEN"
+
+phases:
+  stage1_fast:
+    max_steps: 12000
+    val_check_every_steps: 1000
+    patience_evals: 6
+    min_steps_before_early_stop: 4000
+  stage2_full:
+    max_steps: 60000
+    val_check_every_steps: 1000
+    patience_evals: 10
+    min_steps_before_early_stop: 12000
+
+defaults:
+  lr: 5.0e-4
+  batch_size: 64
+  num_workers: 8
+  amp: 1
+

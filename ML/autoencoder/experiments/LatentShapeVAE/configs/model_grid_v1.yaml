@@ -1,0 +1,13 @@
+version: "v1"
+status: "FROZEN"
+
+latent_dims: [16, 32, 48, 64, 96, 128, 160]
+backbones: ["small", "base", "large"]
+betas: [0.01, 0.03, 0.1, 0.3]
+seeds: [42, 43, 44]
+
+ablation_modes:
+  - "vae"       # KL aktif
+  - "beta0"     # VAE, beta=0
+  - "ae"        # deterministic AE
+

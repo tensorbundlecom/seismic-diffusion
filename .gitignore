@@ -12,11 +12,15 @@ logs/
 ML/autoencoder/experiments/**/visualizations/**/waveforms/
 ML/autoencoder/experiments/**/visualizations/**/specs/fas/
 ML/autoencoder/experiments/WAblation/logs/
-ML/autoencoder/experiments/NonDiagonelExperiments/logs/
-ML/autoencoder/experiments/NonDiagonalRigid/logs/
 ML/autoencoder/experiments/**/*.out
 ML/autoencoder/experiments/**/*.pid
 ML/autoencoder/experiments/**/__pycache__/*.pyc
-ML/autoencoder/experiments/NonDiagonelExperiments/results/**/per_sample*.jsonl
-ML/autoencoder/experiments/NonDiagonelExperiments/results/**/corr_*.npy
-ML/autoencoder/experiments/NonDiagonelExperiments/results/**/corr_stack.npy
+
+# LatentShapeVAE generated heavy artifacts
+ML/autoencoder/experiments/LatentShapeVAE/checkpoints/*.pt
+ML/autoencoder/experiments/LatentShapeVAE/logs/*.log
+ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_*/
+ML/autoencoder/experiments/LatentShapeVAE/results/prior_sampling_*/
+ML/autoencoder/experiments/LatentShapeVAE/results/latent_var_outlier_audit_*/
+ML/autoencoder/experiments/LatentShapeVAE/results/elbo_terms_*/
+ML/autoencoder/experiments/LatentShapeVAE/results/lsv_*/

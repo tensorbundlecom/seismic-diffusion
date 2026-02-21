@@ -1,0 +1,21 @@
+{
+  "version": "v1",
+  "created_utc": "2026-02-19T18:12:00Z",
+  "status": "FROZEN_STAGE1_SELECTION",
+  "selected_model_family": "vae_diag",
+  "selected_beta_regime": {
+    "beta": 0.1,
+    "anneal_enabled": false
+  },
+  "selected_reference_run": "lsv_stage1_vae_base_ld64_b0p1_s42",
+  "selection_rationale": [
+    "Stage-1 adaylari arasinda latent-shape hedefi (N(0,I) yakinligi) en iyi bu rejimde goruldu.",
+    "Prior-sampling realism metriğinde rekabetci/iyi skor elde edildi.",
+    "AE ve beta0 varyantlari recon acisindan guclu olsa da latent-geometri hedeflerini saglamadi."
+  ],
+  "next_actions": [
+    "Stage-2 multi-seed training: seeds 42,43,44",
+    "IID+OOD latent-shape ve prior-sampling degerlendirmesi",
+    "Seed-aggregated final karar tablosu"
+  ]
+}

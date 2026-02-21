@@ -1,9 +1,0 @@
-{
-  "run_name": "rigid_policy_pilot_baseline_diag_width_only_sc0p5_ld128_s44",
-  "stop_reason": "max_steps",
-  "global_step": 12000,
-  "epochs_seen": 6,
-  "best_val": 183.01888413615922,
-  "best_step": 12000,
-  "elapsed_seconds": 293.0683970451355
-}

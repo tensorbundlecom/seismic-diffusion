@@ -1,0 +1,27 @@
+{
+  "n_runs": 10,
+  "run_names": [
+    "lsv_stage2_vae_base_ld64_b0p1_s42_logvfixv2",
+    "lsv_stage2_vae_base_ld64_b0p1_s43_logvfixv2",
+    "lsv_stage2_vae_base_ld64_b0p1_s44_logvfixv2",
+    "lsv_stage2_vae_base_ld64_b0p1_s45_logvfixv2",
+    "lsv_stage2_vae_base_ld64_b0p1_s46_logvfixv2",
+    "lsv_stage2_vae_base_ld64_b0p1_s47_logvfixv2",
+    "lsv_stage2_vae_base_ld64_b0p1_s48_logvfixv2",
+    "lsv_stage2_vae_base_ld64_b0p1_s49_logvfixv2",
+    "lsv_stage2_vae_base_ld64_b0p1_s50_logvfixv2",
+    "lsv_stage2_vae_base_ld64_b0p1_s51_logvfixv2"
+  ],
+  "inputs": {
+    "latent_test_csv": "ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_test_stage2_beta0p1_logvarfix_10seeds_v2/latent_shape_summary.csv",
+    "latent_ood_csv": "ML/autoencoder/experiments/LatentShapeVAE/results/latent_shape_ood_event_stage2_beta0p1_logvarfix_10seeds_v2/latent_shape_summary.csv",
+    "prior_test_csv": "ML/autoencoder/experiments/LatentShapeVAE/results/prior_sampling_test_stage2_beta0p1_logvarfix_10seeds_v2/prior_sampling_realism_summary.csv",
+    "prior_ood_csv": "ML/autoencoder/experiments/LatentShapeVAE/results/prior_sampling_ood_event_stage2_beta0p1_logvarfix_10seeds_v2/prior_sampling_realism_summary.csv",
+    "audit_csv": "ML/autoencoder/experiments/LatentShapeVAE/results/latent_var_outlier_audit_stage2_beta0p1_logvarfix_10seeds_v2/audit_summary.csv"
+  },
+  "outputs": {
+    "per_run_csv": "ML/autoencoder/experiments/LatentShapeVAE/results/stage2_beta0p1_logvarfix_10seeds_v2/robustness_per_run.csv",
+    "aggregate_csv": "ML/autoencoder/experiments/LatentShapeVAE/results/stage2_beta0p1_logvarfix_10seeds_v2/robustness_aggregate.csv",
+    "summary_md": "ML/autoencoder/experiments/LatentShapeVAE/results/stage2_beta0p1_logvarfix_10seeds_v2/robustness_summary.md"
+  }
+}

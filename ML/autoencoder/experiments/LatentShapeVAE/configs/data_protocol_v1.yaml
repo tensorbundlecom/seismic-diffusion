@@ -1,0 +1,27 @@
+version: "v1"
+status: "FROZEN"
+
+data_root: "data/external_dataset/extracted/data/filtered_waveforms/HH"
+event_catalog: "data/external_dataset/extracted/data/events/20140101_20251101_0.0_9.0_9_339.txt"
+
+sample_rate_hz: 100
+channels: ["HH"]
+components_order: ["E", "N", "Z"]
+segment_length: 7001
+
+preprocess:
+  demean: true
+  detrend: true
+  bandpass:
+    enabled: true
+    freqmin: 0.5
+    freqmax: 20.0
+    corners: 4
+    zerophase: true
+
+normalization:
+  type: "global_channelwise_train_only_zscore"
+  stats_file: "ML/autoencoder/experiments/LatentShapeVAE/protocol/waveform_stats_v1.json"
+
+split_manifest: "ML/autoencoder/experiments/LatentShapeVAE/protocol/frozen_event_splits_v1.json"
+

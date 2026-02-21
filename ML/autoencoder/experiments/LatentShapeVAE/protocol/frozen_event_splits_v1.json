@@ -1,0 +1,71 @@
+{
+  "version": "v1",
+  "status": "FROZEN",
+  "created_utc": "2026-02-18T17:38:54.640221+00:00",
+  "seed": 42,
+  "policy": {
+    "data_dir": "data/external_dataset/extracted/data/filtered_waveforms/HH",
+    "event_file": "data/external_dataset/extracted/data/events/20140101_20251101_0.0_9.0_9_339.txt",
+    "ood_strategy": "temporal",
+    "ood_ratio": 0.1,
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "min_files_per_event": 1
+  },
+  "counts": {
+    "events_total": 12721,
+    "events_train": 9159,
+    "events_val": 1145,
+    "events_test": 1145,
+    "events_ood": 1272,
+    "files_total_scanned": 88921,
+    "files_total_used": 88921,
+    "files_train": 64121,
+    "files_val": 7969,
+    "files_test": 7703,
+    "files_ood": 9128,
+    "files_skipped_missing_event": 0
+  },
+  "splits": {
+    "train_files": {
+      "file": "ML/autoencoder/experiments/LatentShapeVAE/protocol/splits_v1/train_files.txt",
+      "count": 64121,
+      "sha256": "a53e548c577b590e55415d6e75883e33e144c9019b3495c9a7b1791f0d942659"
+    },
+    "val_files": {
+      "file": "ML/autoencoder/experiments/LatentShapeVAE/protocol/splits_v1/val_files.txt",
+      "count": 7969,
+      "sha256": "c5db82ce3aa8a07448ee752f6b3f1f765bfe6e24bf93adae563bd44aedb3b7f6"
+    },
+    "test_files": {
+      "file": "ML/autoencoder/experiments/LatentShapeVAE/protocol/splits_v1/test_files.txt",
+      "count": 7703,
+      "sha256": "e23022b53102d5acb072b8938845ff129f43077526d1a315a6678a6edeea4a40"
+    },
+    "ood_event_files": {
+      "file": "ML/autoencoder/experiments/LatentShapeVAE/protocol/splits_v1/ood_event_files.txt",
+      "count": 9128,
+      "sha256": "27df5c9cccde370ef0367d3623dd5dc5fb7d9466af221b7ad58fef6d2d8996da"
+    },
+    "train_event_ids": {
+      "file": "ML/autoencoder/experiments/LatentShapeVAE/protocol/splits_v1/train_event_ids.txt",
+      "count": 9159,
+      "sha256": "9688071fc7a087c068216912610caa05a3ab55c06871b2cf26e36a4189936542"
+    },
+    "val_event_ids": {
+      "file": "ML/autoencoder/experiments/LatentShapeVAE/protocol/splits_v1/val_event_ids.txt",
+      "count": 1145,
+      "sha256": "37fe2ee8b1f4f7aac186c3fe7da4c65b9eb9f523ffe6894622585762524763fc"
+    },
+    "test_event_ids": {
+      "file": "ML/autoencoder/experiments/LatentShapeVAE/protocol/splits_v1/test_event_ids.txt",
+      "count": 1145,
+      "sha256": "b976efb9622b7082f5290cfd25eb514c48e441a7f5f6fbc93adc3bc749690842"
+    },
+    "ood_event_ids": {
+      "file": "ML/autoencoder/experiments/LatentShapeVAE/protocol/splits_v1/ood_event_ids.txt",
+      "count": 1272,
+      "sha256": "3400aa9d981deadbfee50416b66d230fd2687859c8b0f1d36f328db8e3737723"
+    }
+  }
+}

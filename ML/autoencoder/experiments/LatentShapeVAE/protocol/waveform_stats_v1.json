@@ -1,0 +1,37 @@
+{
+  "version": "v1",
+  "status": "FROZEN",
+  "created_utc": "2026-02-18T17:41:42.154204+00:00",
+  "source_manifest": "ML/autoencoder/experiments/LatentShapeVAE/protocol/frozen_event_splits_v1.json",
+  "n_files_total_in_train_list": 64121,
+  "n_files_used": 64121,
+  "n_files_failed": 0,
+  "segment_length": 7001,
+  "sample_rate_hz": 100.0,
+  "channels": [
+    "E",
+    "N",
+    "Z"
+  ],
+  "mean": [
+    0.00022779713055193592,
+    -0.0010088562605225216,
+    0.0011166650583835523
+  ],
+  "std": [
+    12692.292616583924,
+    13545.59489369007,
+    14640.451344035786
+  ],
+  "preprocess": {
+    "demean": true,
+    "detrend": true,
+    "bandpass": {
+      "enabled": true,
+      "freqmin": 0.5,
+      "freqmax": 20.0,
+      "corners": 4,
+      "zerophase": true
+    }
+  }
+}

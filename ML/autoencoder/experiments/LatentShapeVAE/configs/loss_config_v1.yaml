@@ -1,0 +1,25 @@
+version: "v1"
+status: "FROZEN"
+
+time_domain:
+  name: "mse"
+  weight: 1.0
+
+mrstft:
+  enabled: true
+  weight: 0.5
+  n_ffts: [64, 256, 1024]
+  hop_lengths: [16, 64, 256]
+  win_lengths: [64, 256, 1024]
+  eps: 1.0e-7
+  log_scale: true
+
+kl:
+  beta_default: 0.1
+  free_bits: 0.0
+  anneal:
+    enabled: false
+    warmup_steps: 0
+    beta_start: 0.0
+    beta_end: 0.1
+

@@ -1,0 +1,28 @@
+{
+  "version": "v2",
+  "created_utc": "2026-02-20T14:30:00Z",
+  "status": "FROZEN_STAGE2_10SEED_CLOSURE",
+  "experiment_line": "LatentShapeVAE",
+  "selection_scope": "stage2 beta=0.1 + bounded_logvar, seeds 42-51",
+  "selected_run_name": "lsv_stage2_vae_base_ld64_b0p1_s43_logvfixv2",
+  "selected_checkpoint": "ML/autoencoder/experiments/LatentShapeVAE/checkpoints/lsv_stage2_vae_base_ld64_b0p1_s43_logvfixv2_best.pt",
+  "selection_reasoning": [
+    "10-seed robustness tablosunda en dusuk latent-shape hata ve divergence degerlerini birlikte verdi (test+OOD).",
+    "Outlier audit tarafinda max_var dusuk ve saturasyon riski en sinirli adaylardan biri oldu.",
+    "Prior sampling realism metrikleri kabul edilebilir bantta kaldi ve genel trade-off'ta en dengeli aday secildi."
+  ],
+  "selection_method": {
+    "primary_gate": "numerical stability + no catastrophic variance outlier",
+    "secondary_gate": "test/OOD latent-shape metrics",
+    "tertiary_gate": "prior sampling realism composite"
+  },
+  "evidence_artifacts": {
+    "robustness_summary": "ML/autoencoder/experiments/LatentShapeVAE/results/stage2_beta0p1_logvarfix_10seeds_v2/robustness_summary.md",
+    "robustness_per_run_csv": "ML/autoencoder/experiments/LatentShapeVAE/results/stage2_beta0p1_logvarfix_10seeds_v2/robustness_per_run.csv",
+    "outlier_audit": "ML/autoencoder/experiments/LatentShapeVAE/results/latent_var_outlier_audit_stage2_beta0p1_logvarfix_10seeds_v2/audit_summary.csv"
+  },
+  "notes": [
+    "Bu secim final/operasyonel referans checkpoint secimidir; robust teori kaniti oldugu anlamina gelmez.",
+    "10-seed sonucunda recipe seed-robust degil; bu bilgi closure raporunda FAIL/PARTIAL olarak isaretlenmistir."
+  ]
+}

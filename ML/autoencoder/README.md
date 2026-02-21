@@ -8,8 +8,7 @@ This document describes the legacy root autoencoder scripts.
 Current isolated experiment workflows are maintained under:
 
 - `ML/autoencoder/experiments/General/README.md`
-- `ML/autoencoder/experiments/NonDiagonel/README.md`
-- `ML/autoencoder/experiments/NonDiagonalRigid/README.md`
+- `ML/autoencoder/experiments/LatentShapeVAE/README.md`
 
 Use experiment-level READMEs for the latest training/evaluation commands and protocol decisions.
 
