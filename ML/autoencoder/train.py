@@ -610,7 +610,7 @@ def main():
     # Create model
     print(f"Creating {args.model_type} model...")
     if args.model_type == 'vae':
-        model = VariationalAutoencoder(in_channels=3, latent_dim=args.latent_dim)
+        model = VariationalAutoencoder(in_channels=3, latent_channels=args.latent_dim)
         print(f"Using beta-VAE with beta={args.beta}")
     else:
         model = ConvAutoencoder(in_channels=3, latent_dim=args.latent_dim)

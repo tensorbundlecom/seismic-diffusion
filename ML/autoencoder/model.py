@@ -198,9 +198,9 @@ class VAEEncoder(nn.Module):
     """
     Encoder network for the Variational Autoencoder.
     Outputs parameters for the latent distribution (mean and log-variance).
-    Uses standard non-spatial latent representation.
+    Uses spatial latent representation (convolutional feature maps).
     """
-    def __init__(self, in_channels=3, latent_dim=128):
+    def __init__(self, in_channels=3, latent_channels=128):
         super(VAEEncoder, self).__init__()
         
         # Shared encoding layers
@@ -227,19 +227,11 @@ class VAEEncoder(nn.Module):
             # Output: (256, H/16, W/16)
         )
         
-        self.latent_dim = latent_dim
+        self.latent_channels = latent_channels
         
-        # For 256x256 input: 256 * 16 * 16 = 65536
-        # This will be calculated dynamically in the first forward pass
-        self.flattened_dim = None
-        self.fc_mu = None
-        self.fc_logvar = None
-        
-    def _initialize_fc_layers(self, flattened_dim):
-        """Initialize fully connected layers once we know the flattened dimension."""
-        self.flattened_dim = flattened_dim
-        self.fc_mu = nn.Linear(flattened_dim, self.latent_dim)
-        self.fc_logvar = nn.Linear(flattened_dim, self.latent_dim)
+        # Convolutional layers to produce spatial mean and log-variance
+        self.conv_mu = nn.Conv2d(256, latent_channels, kernel_size=3, padding=1)
+        self.conv_logvar = nn.Conv2d(256, latent_channels, kernel_size=3, padding=1)
         
     def forward(self, x):
         """
@@ -249,25 +241,14 @@ class VAEEncoder(nn.Module):
             x: Input tensor of shape (batch_size, in_channels, height, width)
             
         Returns:
-            mu: Mean of the latent distribution (batch_size, latent_dim)
-            logvar: Log-variance of the latent distribution (batch_size, latent_dim)
+            mu: Mean of the latent distribution (batch_size, latent_channels, H/16, W/16)
+            logvar: Log-variance of the latent distribution (batch_size, latent_channels, H/16, W/16)
         """
-        batch_size = x.size(0)
         h = self.encoder(x)
         
-        # Flatten spatial dimensions
-        h_flat = h.view(batch_size, -1)
-        
-        # Initialize FC layers on first forward pass
-        if self.fc_mu is None:
-            self._initialize_fc_layers(h_flat.size(1))
-            # Move to same device as input
-            self.fc_mu = self.fc_mu.to(x.device)
-            self.fc_logvar = self.fc_logvar.to(x.device)
-        
-        # Project to latent space (1D vectors)
-        mu = self.fc_mu(h_flat)
-        logvar = self.fc_logvar(h_flat)
+        # Produce spatial mean and log-variance
+        mu = self.conv_mu(h)
+        logvar = self.conv_logvar(h)
         
         return mu, logvar
 
@@ -279,15 +260,15 @@ class VariationalAutoencoder(nn.Module):
     The VAE learns a probabilistic mapping to a latent space, allowing for
     generation of new samples by sampling from the learned distribution.
     
-    Uses standard 1D latent vectors (non-spatial) for the reparameterization trick,
-    which reduces graininess compared to spatial latent representations.
+    Uses spatial latent representations (convolutional feature maps) for
+    the reparameterization trick, maintaining spatial structure throughout.
     
     Args:
         in_channels (int): Number of input channels (e.g., 1 for grayscale, 3 for RGB)
-        latent_dim (int): Dimension of the latent space representation (1D vector)
+        latent_channels (int): Number of channels in the latent space representation
         
     Example:
-        >>> model = VariationalAutoencoder(in_channels=3, latent_dim=128)
+        >>> model = VariationalAutoencoder(in_channels=3, latent_channels=128)
         >>> x = torch.randn(8, 3, 256, 256)  # Batch of 8 RGB images
         >>> reconstructed, mu, logvar = model(x)
         >>> print(reconstructed.shape)  # torch.Size([8, 3, 256, 256])
@@ -297,28 +278,28 @@ class VariationalAutoencoder(nn.Module):
         >>> kl_loss = model.kl_divergence(mu, logvar)
         >>> total_loss = recon_loss + kl_loss
     """
-    def __init__(self, in_channels=3, latent_dim=128):
+    def __init__(self, in_channels=3, latent_channels=128):
         super(VariationalAutoencoder, self).__init__()
         
-        self.encoder = VAEEncoder(in_channels=in_channels, latent_dim=latent_dim)
-        self.decoder = Decoder(out_channels=in_channels, latent_dim=latent_dim, use_latent_projection=True)
+        self.encoder = VAEEncoder(in_channels=in_channels, latent_channels=latent_channels)
+        self.decoder = Decoder(out_channels=in_channels, latent_dim=latent_channels, use_latent_projection=False)
         self.in_channels = in_channels
-        self.latent_dim = latent_dim
+        self.latent_channels = latent_channels
         
     def reparameterize(self, mu, logvar):
         """
         Reparameterization trick: z = mu + sigma * epsilon
         where epsilon is sampled from N(0, 1).
         
-        Now operates on 1D latent vectors instead of spatial tensors,
-        which significantly reduces graininess in reconstructions.
+        Now operates on spatial latent tensors, maintaining the convolutional
+        structure throughout the encoding-decoding process.
         
         Args:
-            mu: Mean of the latent distribution (batch_size, latent_dim)
-            logvar: Log-variance of the latent distribution (batch_size, latent_dim)
+            mu: Mean of the latent distribution (batch_size, latent_channels, H, W)
+            logvar: Log-variance of the latent distribution (batch_size, latent_channels, H, W)
             
         Returns:
-            Sampled latent vector z (batch_size, latent_dim)
+            Sampled latent tensor z (batch_size, latent_channels, H, W)
         """
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
@@ -394,8 +375,10 @@ class VariationalAutoencoder(nn.Module):
         Returns:
             Generated image tensor
         """
-        # Sample from standard normal distribution in 1D latent space
-        z = torch.randn(num_samples, self.latent_dim).to(device)
+        # Sample from standard normal distribution in spatial latent space
+        # For 256x256 input, latent spatial size is (16, 16)
+        latent_spatial_size = 16
+        z = torch.randn(num_samples, self.latent_channels, latent_spatial_size, latent_spatial_size).to(device)
         samples = self.decode(z)
         return samples
     
@@ -411,7 +394,7 @@ class VariationalAutoencoder(nn.Module):
             use_mean (bool): If True, return mu (deterministic). If False, sample z.
             
         Returns:
-            Latent embedding tensor of shape (batch_size, latent_dim)
+            Latent embedding tensor of shape (batch_size, latent_channels, H/16, W/16)
         """
         mu, logvar = self.encode(x)
         if use_mean:
@@ -465,19 +448,19 @@ class VariationalAutoencoder(nn.Module):
         return total_loss, recon_loss, kl_loss
 
 
-def get_vae_model(in_channels=3, latent_dim=128, device='cuda'):
+def get_vae_model(in_channels=3, latent_channels=128, device='cuda'):
     """
     Factory function to create and initialize the VAE model.
     
     Args:
         in_channels (int): Number of input channels
-        latent_dim (int): Dimension of the latent space
+        latent_channels (int): Number of channels in the latent space
         device (str): Device to place the model on ('cuda' or 'cpu')
         
     Returns:
         VariationalAutoencoder model on the specified device
     """
-    model = VariationalAutoencoder(in_channels=in_channels, latent_dim=latent_dim)
+    model = VariationalAutoencoder(in_channels=in_channels, latent_channels=latent_channels)
     model = model.to(device)
     return model
 
@@ -486,9 +469,9 @@ class CVAEEncoder(nn.Module):
     """
     Conditional Encoder network for the Conditional Variational Autoencoder.
     Takes both the input image and conditioning information (magnitude, location, station).
-    Outputs parameters for the latent distribution (mean and log-variance).
+    Outputs parameters for the latent distribution (mean and log-variance) as spatial tensors.
     """
-    def __init__(self, in_channels=3, latent_dim=128, num_stations=100, condition_dim=64):
+    def __init__(self, in_channels=3, latent_channels=128, num_stations=100, condition_dim=64):
         super(CVAEEncoder, self).__init__()
         
         # Shared encoding layers for the image
@@ -515,7 +498,7 @@ class CVAEEncoder(nn.Module):
             # Output: (256, H/16, W/16)
         )
         
-        self.latent_dim = latent_dim
+        self.latent_channels = latent_channels
         self.condition_dim = condition_dim
         
         # Station embedding layer
@@ -531,19 +514,11 @@ class CVAEEncoder(nn.Module):
             nn.ReLU(inplace=True),
         )
         
-        # For 256x256 input: 256 * 16 * 16 = 65536
-        # This will be calculated dynamically in the first forward pass
-        self.flattened_dim = None
-        self.fc_mu = None
-        self.fc_logvar = None
-        
-    def _initialize_fc_layers(self, flattened_dim):
-        """Initialize fully connected layers once we know the flattened dimension."""
-        self.flattened_dim = flattened_dim
-        # Combine image features and condition features
-        combined_dim = flattened_dim + self.condition_dim
-        self.fc_mu = nn.Linear(combined_dim, self.latent_dim)
-        self.fc_logvar = nn.Linear(combined_dim, self.latent_dim)
+        # Conditional convolutional layers to produce spatial mean and log-variance
+        # These will incorporate the conditioning information
+        self.condition_conv = nn.Conv2d(256 + condition_dim, 256, kernel_size=3, padding=1)
+        self.conv_mu = nn.Conv2d(256, latent_channels, kernel_size=3, padding=1)
+        self.conv_logvar = nn.Conv2d(256, latent_channels, kernel_size=3, padding=1)
         
     def forward(self, x, magnitude, location, station_idx):
         """
@@ -556,16 +531,13 @@ class CVAEEncoder(nn.Module):
             station_idx: Station index tensor of shape (batch_size,)
             
         Returns:
-            mu: Mean of the latent distribution (batch_size, latent_dim)
-            logvar: Log-variance of the latent distribution (batch_size, latent_dim)
+            mu: Mean of the latent distribution (batch_size, latent_channels, H/16, W/16)
+            logvar: Log-variance of the latent distribution (batch_size, latent_channels, H/16, W/16)
         """
         batch_size = x.size(0)
         
         # Encode the image
-        h = self.encoder(x)
-        
-        # Flatten spatial dimensions
-        h_flat = h.view(batch_size, -1)
+        h = self.encoder(x)  # (batch_size, 256, H/16, W/16)
         
         # Process the conditioning information
         station_emb = self.station_embedding(station_idx)  # (batch_size, condition_dim // 4)
@@ -575,19 +547,20 @@ class CVAEEncoder(nn.Module):
         condition_input = torch.cat([magnitude_expanded, location, station_emb], dim=1)
         condition_features = self.condition_network(condition_input)  # (batch_size, condition_dim)
         
-        # Initialize FC layers on first forward pass
-        if self.fc_mu is None:
-            self._initialize_fc_layers(h_flat.size(1))
-            # Move to same device as input
-            self.fc_mu = self.fc_mu.to(x.device)
-            self.fc_logvar = self.fc_logvar.to(x.device)
+        # Expand condition features to spatial dimensions and concatenate with image features
+        spatial_size = h.shape[2:]  # (H/16, W/16)
+        condition_spatial = condition_features.unsqueeze(-1).unsqueeze(-1)  # (batch_size, condition_dim, 1, 1)
+        condition_spatial = condition_spatial.expand(-1, -1, spatial_size[0], spatial_size[1])  # (batch_size, condition_dim, H/16, W/16)
         
         # Combine image and condition features
-        combined_features = torch.cat([h_flat, condition_features], dim=1)
+        combined_features = torch.cat([h, condition_spatial], dim=1)  # (batch_size, 256 + condition_dim, H/16, W/16)
         
-        # Project to latent space (1D vectors)
-        mu = self.fc_mu(combined_features)
-        logvar = self.fc_logvar(combined_features)
+        # Apply conditional convolution
+        h_cond = self.condition_conv(combined_features)  # (batch_size, 256, H/16, W/16)
+        
+        # Produce spatial mean and log-variance
+        mu = self.conv_mu(h_cond)
+        logvar = self.conv_logvar(h_cond)
         
         return mu, logvar
 
@@ -595,9 +568,9 @@ class CVAEEncoder(nn.Module):
 class CVAEDecoder(nn.Module):
     """
     Conditional Decoder network for the Conditional Variational Autoencoder.
-    Takes both the latent representation and conditioning information.
+    Takes both the spatial latent representation and conditioning information.
     """
-    def __init__(self, out_channels=3, latent_dim=128, num_stations=100, condition_dim=64):
+    def __init__(self, out_channels=3, latent_channels=128, num_stations=100, condition_dim=64):
         super(CVAEDecoder, self).__init__()
         
         self.condition_dim = condition_dim
@@ -614,11 +587,8 @@ class CVAEDecoder(nn.Module):
             nn.ReLU(inplace=True),
         )
         
-        # Project combined latent + condition vector back to spatial dimensions
-        # Target spatial size for 256x256 input: (256, 16, 16)
-        self.spatial_dim = 16
-        self.projection_dim = 256 * self.spatial_dim * self.spatial_dim
-        self.fc_projection = nn.Linear(latent_dim + condition_dim, self.projection_dim)
+        # Conditional convolution to incorporate conditioning information
+        self.condition_conv = nn.Conv2d(latent_channels + condition_dim, 256, kernel_size=3, padding=1)
         
         # Decoding layers
         self.decoder = nn.Sequential(
@@ -639,7 +609,7 @@ class CVAEDecoder(nn.Module):
             # Output: (32, H/2, W/2)
             
             nn.ConvTranspose2d(32, out_channels, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.Sigmoid()  # Output in range [0, 1]
+            # nn.Sigmoid()  # Output in range [0, 1]
             # Output: (out_channels, H, W)
         )
         
@@ -648,7 +618,7 @@ class CVAEDecoder(nn.Module):
         Forward pass through the CVAE decoder.
         
         Args:
-            z: Latent tensor (batch_size, latent_dim)
+            z: Spatial latent tensor (batch_size, latent_channels, H/16, W/16)
             magnitude: Event magnitude tensor of shape (batch_size,)
             location: Normalized location tensor of shape (batch_size, 3)
             station_idx: Station index tensor of shape (batch_size,)
@@ -656,8 +626,6 @@ class CVAEDecoder(nn.Module):
         Returns:
             Reconstructed image tensor
         """
-        batch_size = z.size(0)
-        
         # Process the conditioning information
         station_emb = self.station_embedding(station_idx)
         magnitude_expanded = magnitude.unsqueeze(1)
@@ -666,12 +634,16 @@ class CVAEDecoder(nn.Module):
         condition_input = torch.cat([magnitude_expanded, location, station_emb], dim=1)
         condition_features = self.condition_network(condition_input)
         
-        # Combine latent and condition features
-        combined = torch.cat([z, condition_features], dim=1)
+        # Expand condition features to spatial dimensions and concatenate with latent
+        spatial_size = z.shape[2:]  # (H/16, W/16)
+        condition_spatial = condition_features.unsqueeze(-1).unsqueeze(-1)  # (batch_size, condition_dim, 1, 1)
+        condition_spatial = condition_spatial.expand(-1, -1, spatial_size[0], spatial_size[1])  # (batch_size, condition_dim, H/16, W/16)
         
-        # Project to spatial dimensions
-        h = self.fc_projection(combined)
-        h = h.view(batch_size, 256, self.spatial_dim, self.spatial_dim)
+        # Combine latent and condition features
+        combined = torch.cat([z, condition_spatial], dim=1)  # (batch_size, latent_channels + condition_dim, H/16, W/16)
+        
+        # Apply conditional convolution
+        h = self.condition_conv(combined)  # (batch_size, 256, H/16, W/16)
         
         # Decode
         return self.decoder(h)
@@ -690,15 +662,18 @@ class ConditionalVariationalAutoencoder(nn.Module):
     in seismic waveforms, and enables controlled generation of waveforms with
     specific characteristics.
     
+    Uses spatial latent representations (convolutional feature maps) for
+    the reparameterization trick, maintaining spatial structure throughout.
+    
     Args:
         in_channels (int): Number of input channels (e.g., 3 for E/N/Z components)
-        latent_dim (int): Dimension of the latent space representation
+        latent_channels (int): Number of channels in the latent space representation
         num_stations (int): Number of unique stations (for embedding)
         condition_dim (int): Dimension of the conditioning feature vector
         
     Example:
         >>> model = ConditionalVariationalAutoencoder(
-        ...     in_channels=3, latent_dim=128, num_stations=100, condition_dim=64
+        ...     in_channels=3, latent_channels=128, num_stations=100, condition_dim=64
         ... )
         >>> x = torch.randn(8, 3, 256, 256)
         >>> magnitude = torch.randn(8)
@@ -706,23 +681,23 @@ class ConditionalVariationalAutoencoder(nn.Module):
         >>> station_idx = torch.randint(0, 100, (8,))
         >>> reconstructed, mu, logvar = model(x, magnitude, location, station_idx)
     """
-    def __init__(self, in_channels=3, latent_dim=128, num_stations=100, condition_dim=64):
+    def __init__(self, in_channels=3, latent_channels=128, num_stations=100, condition_dim=64):
         super(ConditionalVariationalAutoencoder, self).__init__()
         
         self.encoder = CVAEEncoder(
             in_channels=in_channels,
-            latent_dim=latent_dim,
+            latent_channels=latent_channels,
             num_stations=num_stations,
             condition_dim=condition_dim
         )
         self.decoder = CVAEDecoder(
             out_channels=in_channels,
-            latent_dim=latent_dim,
+            latent_channels=latent_channels,
             num_stations=num_stations,
             condition_dim=condition_dim
         )
         self.in_channels = in_channels
-        self.latent_dim = latent_dim
+        self.latent_channels = latent_channels
         self.num_stations = num_stations
         
     def reparameterize(self, mu, logvar):
@@ -730,12 +705,15 @@ class ConditionalVariationalAutoencoder(nn.Module):
         Reparameterization trick: z = mu + sigma * epsilon
         where epsilon is sampled from N(0, 1).
         
+        Now operates on spatial latent tensors, maintaining the convolutional
+        structure throughout the encoding-decoding process.
+        
         Args:
-            mu: Mean of the latent distribution (batch_size, latent_dim)
-            logvar: Log-variance of the latent distribution (batch_size, latent_dim)
+            mu: Mean of the latent distribution (batch_size, latent_channels, H, W)
+            logvar: Log-variance of the latent distribution (batch_size, latent_channels, H, W)
             
         Returns:
-            Sampled latent vector z (batch_size, latent_dim)
+            Sampled latent tensor z (batch_size, latent_channels, H, W)
         """
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
@@ -799,7 +777,7 @@ class ConditionalVariationalAutoencoder(nn.Module):
         Decode latent representation to reconstructed image.
         
         Args:
-            z: Latent tensor (batch_size, latent_dim)
+            z: Spatial latent tensor (batch_size, latent_channels, H/16, W/16)
             magnitude: Event magnitude tensor of shape (batch_size,)
             location: Normalized location tensor of shape (batch_size, 3)
             station_idx: Station index tensor of shape (batch_size,)
@@ -824,8 +802,10 @@ class ConditionalVariationalAutoencoder(nn.Module):
         Returns:
             Generated image tensor
         """
-        # Sample from standard normal distribution in 1D latent space
-        z = torch.randn(num_samples, self.latent_dim).to(device)
+        # Sample from standard normal distribution in spatial latent space
+        # For 256x256 input, latent spatial size is (16, 16)
+        latent_spatial_size = 16
+        z = torch.randn(num_samples, self.latent_channels, latent_spatial_size, latent_spatial_size).to(device)
         samples = self.decode(z, magnitude, location, station_idx)
         return samples
     
@@ -844,7 +824,7 @@ class ConditionalVariationalAutoencoder(nn.Module):
             use_mean (bool): If True, return mu (deterministic). If False, sample z.
             
         Returns:
-            Latent embedding tensor of shape (batch_size, latent_dim)
+            Latent embedding tensor of shape (batch_size, latent_channels, H/16, W/16)
         """
         mu, logvar = self.encode(x, magnitude, location, station_idx)
         if use_mean:
@@ -899,13 +879,13 @@ class ConditionalVariationalAutoencoder(nn.Module):
         return total_loss, recon_loss, kl_loss
 
 
-def get_cvae_model(in_channels=3, latent_dim=128, num_stations=100, condition_dim=64, device='cuda'):
+def get_cvae_model(in_channels=3, latent_channels=128, num_stations=100, condition_dim=64, device='cuda'):
     """
     Factory function to create and initialize the CVAE model.
     
     Args:
         in_channels (int): Number of input channels
-        latent_dim (int): Dimension of the latent space
+        latent_channels (int): Number of channels in the latent space
         num_stations (int): Number of unique stations
         condition_dim (int): Dimension of conditioning features
         device (str): Device to place the model on ('cuda' or 'cpu')
@@ -915,7 +895,7 @@ def get_cvae_model(in_channels=3, latent_dim=128, num_stations=100, condition_di
     """
     model = ConditionalVariationalAutoencoder(
         in_channels=in_channels,
-        latent_dim=latent_dim,
+        latent_channels=latent_channels,
         num_stations=num_stations,
         condition_dim=condition_dim
     )
@@ -932,64 +912,49 @@ if __name__ == "__main__":
     # Create model
     model = ConvAutoencoder(in_channels=3, latent_dim=128)
     print(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters")
-    
+
     # Test with a sample input
-    batch_size = 4
-    height, width = 256, 256
-    x = torch.randn(batch_size, 3, height, width)
-    
+    x = torch.randn(8, 3, 256, 256)
     print(f"\nInput shape: {x.shape}")
-    
+
     # Forward pass
     reconstructed = model(x)
     print(f"Reconstructed shape: {reconstructed.shape}")
-    
-    # Test encoder and decoder separately
-    latent = model.encode(x)
-    print(f"Latent shape: {latent.shape}")
-    
-    decoded = model.decode(latent)
-    print(f"Decoded shape: {decoded.shape}")
-    
-    print("\nAutoencoder test successful!")
-    
-    # Test VAE
+
+    # Test embedding creation
+    embedding = model.create_embedding(x)
+    print(f"Embedding shape: {embedding.shape}")
+
     print("\n" + "="*60)
     print("Testing Variational Autoencoder...")
     print("="*60)
-    
-    vae = VariationalAutoencoder(in_channels=3, latent_dim=128)
+
+    vae = VariationalAutoencoder(in_channels=3, latent_channels=128)
     print(f"VAE created with {sum(p.numel() for p in vae.parameters()):,} parameters")
-    
+
     print(f"\nInput shape: {x.shape}")
-    
+
     # Forward pass
     reconstructed, mu, logvar = vae(x)
     print(f"Reconstructed shape: {reconstructed.shape}")
     print(f"Mu shape: {mu.shape}")
     print(f"Logvar shape: {logvar.shape}")
-    
-    # Test loss calculation
-    total_loss, recon_loss, kl_loss = vae.loss_function(reconstructed, x, mu, logvar, beta=1.0)
-    print(f"\nLoss calculation:")
-    print(f"  Total loss: {total_loss.item():.4f}")
-    print(f"  Reconstruction loss: {recon_loss.item():.4f}")
-    print(f"  KL divergence: {kl_loss.item():.4f}")
-    
+
+    # Test embedding creation
+    embedding = vae.create_embedding(x)
+    print(f"Embedding shape: {embedding.shape}")
+
     # Test sampling
-    samples = vae.sample(num_samples=2, device='cpu')
-    print(f"\nGenerated samples shape: {samples.shape}")
-    
-    print("\nVAE test successful!")
-    
-    # Test CVAE
+    samples = vae.sample(4)
+    print(f"Samples shape: {samples.shape}")
+
     print("\n" + "="*60)
     print("Testing Conditional Variational Autoencoder...")
     print("="*60)
     
     cvae = ConditionalVariationalAutoencoder(
         in_channels=3,
-        latent_dim=128,
+        latent_channels=128,
         num_stations=50,
         condition_dim=64
     )
