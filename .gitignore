@@ -7,3 +7,7 @@ ML/autoencoder/checkpoints/
 ML/autoencoder/logs/
 checkpoints_cvae
 logs_cvae
+ML/diffusion/embeddings/*
+ML/diffusion/checkpoints/*
+ML/diffusion/logs/*
+data.zip
