@@ -19,9 +19,9 @@ from ML.autoencoder.experiments.General.core.stft_dataset import SeismicSTFTData
 from ML.autoencoder.experiments.General.core.model_baseline import ConditionalVariationalAutoencoder
 from ML.autoencoder.experiments.FullCovariance.core.model_full_cov import FullCovCVAE
 from ML.autoencoder.experiments.NormalizingFlow.core.model_flow import FlowCVAE
-from ML.autoencoder.experiments.WBaseline.core.model_wbaseline import WBaselineCVAE
-from ML.autoencoder.experiments.WFullCov.core.model_wfullcov import WFullCovCVAE
-from ML.autoencoder.experiments.NormalizingW.core.model_wflow import WFlowCVAE
+from ML.autoencoder.experiments.LegacyCondBaseline.core.model_wbaseline import WBaselineCVAE
+from ML.autoencoder.experiments.LegacyCondFullCov.core.model_wfullcov import WFullCovCVAE
+from ML.autoencoder.experiments.LegacyCondFlow.core.model_wflow import WFlowCVAE
 
 
 def reconstruct_signal(magnitude_spec, mag_min=0.0, mag_max=1.0, nperseg=256, noverlap=192, nfft=256, fs=100.0, n_iter=64):
@@ -180,6 +180,33 @@ def interpret_results(agg):
     return '\n'.join(lines)
 
 
+def sample_condition_only(model, magnitude, location, station_idx, device):
+    """
+    Condition-only generation path (no input spectrogram x).
+    """
+    if hasattr(model, 'sample'):
+        out = model.sample(magnitude.size(0), magnitude, location, station_idx, device=device)
+        if isinstance(out, tuple):
+            out = out[0]
+        return out
+
+    # Fallback for models without sample(), e.g., FullCovCVAE.
+    if hasattr(model, 'decoder') and hasattr(model, 'latent_dim'):
+        z = torch.randn(magnitude.size(0), int(model.latent_dim), device=device)
+        return model.decoder(z, magnitude, location, station_idx)
+
+    raise AttributeError(f'Model {model.__class__.__name__} does not support condition-only sampling.')
+
+
+def extract_spec_channel(pred, channel_idx, target_hw):
+    """
+    Extract a single spectrogram channel and enforce target HxW.
+    """
+    if pred.shape[2:] != target_hw:
+        pred = torch.nn.functional.interpolate(pred, size=target_hw, mode='bilinear', align_corners=False)
+    return pred[0, channel_idx].detach().cpu().numpy()
+
+
 def main():
     parser = argparse.ArgumentParser(description='Evaluate custom post-training OOD across all models.')
     parser.add_argument('--ood_data_dir', default='data/ood_waveforms/post_training_custom/filtered', help='OOD data root.')
@@ -192,9 +219,15 @@ def main():
     parser.add_argument('--baseline_checkpoint', default='ML/autoencoder/experiments/General/checkpoints/baseline_external_best.pt', help='Baseline checkpoint path.')
     parser.add_argument('--fullcov_checkpoint', default='ML/autoencoder/experiments/FullCovariance/checkpoints/full_cov_external_best.pt', help='FullCov checkpoint path.')
     parser.add_argument('--flow_checkpoint', default='ML/autoencoder/experiments/NormalizingFlow/checkpoints/flow_external_best.pt', help='Flow checkpoint path.')
-    parser.add_argument('--wbaseline_checkpoint', default='ML/autoencoder/experiments/WBaseline/checkpoints/wbaseline_external_best.pt', help='WBaseline checkpoint path.')
-    parser.add_argument('--wfullcov_checkpoint', default='ML/autoencoder/experiments/WFullCov/checkpoints/wfullcov_external_best.pt', help='WFullCov checkpoint path.')
-    parser.add_argument('--wflow_checkpoint', default='ML/autoencoder/experiments/NormalizingW/checkpoints/wflow_external_best.pt', help='WFlow checkpoint path.')
+    parser.add_argument('--wbaseline_checkpoint', default='ML/autoencoder/experiments/LegacyCondBaseline/checkpoints/wbaseline_external_best.pt', help='WBaseline checkpoint path.')
+    parser.add_argument('--wfullcov_checkpoint', default='ML/autoencoder/experiments/LegacyCondFullCov/checkpoints/wfullcov_external_best.pt', help='WFullCov checkpoint path.')
+    parser.add_argument('--wflow_checkpoint', default='ML/autoencoder/experiments/LegacyCondFlow/checkpoints/wflow_external_best.pt', help='WFlow checkpoint path.')
+    parser.add_argument(
+        '--inference_mode',
+        choices=['reconstruct', 'condition_only'],
+        default='reconstruct',
+        help='reconstruct: model(x,c), condition_only: model.sample(c) without x.',
+    )
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -298,24 +331,36 @@ def main():
             loc_in = loc.unsqueeze(0).to(device)
             sta_in = station_idx.unsqueeze(0).to(device)
 
-            r_base, _, _ = base_model(spec_in, mag_in, loc_in, sta_in)
-            r_fc, _, _ = fc_model(spec_in, mag_in, loc_in, sta_in)
-            r_flow, _, _, _, _ = flow_model(spec_in, mag_in, loc_in, sta_in)
+            if args.inference_mode == 'reconstruct':
+                r_base, _, _ = base_model(spec_in, mag_in, loc_in, sta_in)
+                r_fc, _, _ = fc_model(spec_in, mag_in, loc_in, sta_in)
+                r_flow, _, _, _, _ = flow_model(spec_in, mag_in, loc_in, sta_in)
 
-            r_wbase, _, _ = wbaseline(spec_in, mag_in, loc_in, sta_in)
-            r_wfc, _, _ = wfullcov(spec_in, mag_in, loc_in, sta_in)
-            r_wflow, _, _, _, _ = wflow(spec_in, mag_in, loc_in, sta_in)
+                r_wbase, _, _ = wbaseline(spec_in, mag_in, loc_in, sta_in)
+                r_wfc, _, _ = wfullcov(spec_in, mag_in, loc_in, sta_in)
+                r_wflow, _, _, _, _ = wflow(spec_in, mag_in, loc_in, sta_in)
 
-            r_mr, _, _ = mrloss_model(spec_in, mag_in, loc_in, sta_in)
+                r_mr, _, _ = mrloss_model(spec_in, mag_in, loc_in, sta_in)
+            else:
+                r_base = sample_condition_only(base_model, mag_in, loc_in, sta_in, device)
+                r_fc = sample_condition_only(fc_model, mag_in, loc_in, sta_in, device)
+                r_flow = sample_condition_only(flow_model, mag_in, loc_in, sta_in, device)
 
-            orig_spec = spec_in[0, 2].cpu().numpy()
-            base_spec = r_base[0, 2].cpu().numpy()
-            fc_spec = r_fc[0, 2].cpu().numpy()
-            flow_spec = r_flow[0, 2].cpu().numpy()
-            wbase_spec = r_wbase[0, 2].cpu().numpy()
-            wfc_spec = r_wfc[0, 2].cpu().numpy()
-            wflow_spec = r_wflow[0, 2].cpu().numpy()
-            mr_spec = r_mr[0, 2].cpu().numpy()
+                r_wbase = sample_condition_only(wbaseline, mag_in, loc_in, sta_in, device)
+                r_wfc = sample_condition_only(wfullcov, mag_in, loc_in, sta_in, device)
+                r_wflow = sample_condition_only(wflow, mag_in, loc_in, sta_in, device)
+
+                r_mr = sample_condition_only(mrloss_model, mag_in, loc_in, sta_in, device)
+
+            target_hw = spec_in.shape[2:]
+            orig_spec = spec_in[0, 2].detach().cpu().numpy()
+            base_spec = extract_spec_channel(r_base, 2, target_hw)
+            fc_spec = extract_spec_channel(r_fc, 2, target_hw)
+            flow_spec = extract_spec_channel(r_flow, 2, target_hw)
+            wbase_spec = extract_spec_channel(r_wbase, 2, target_hw)
+            wfc_spec = extract_spec_channel(r_wfc, 2, target_hw)
+            wflow_spec = extract_spec_channel(r_wflow, 2, target_hw)
+            mr_spec = extract_spec_channel(r_mr, 2, target_hw)
 
             wav_base = reconstruct_signal(base_spec, mag_min, mag_max, nperseg=256, noverlap=192, fs=target_fs)
             wav_fc = reconstruct_signal(fc_spec, mag_min, mag_max, nperseg=256, noverlap=192, fs=target_fs)
@@ -351,6 +396,7 @@ def main():
     md_lines.append('# Post-Training Custom OOD (HH-only) Metrics Summary')
     md_lines.append('')
     md_lines.append('This summary compares all models on the custom post-training OOD set (HH-only, station subset).')
+    md_lines.append(f'Inference mode: `{args.inference_mode}`.')
     md_lines.append('')
     md_lines.append('## Metrics Table')
     md_lines.append('')

@@ -1,0 +1,14 @@
+{
+  "train": {
+    "num_samples": 71386,
+    "num_events": 10176
+  },
+  "val": {
+    "num_samples": 8859,
+    "num_events": 1272
+  },
+  "test": {
+    "num_samples": 8676,
+    "num_events": 1273
+  }
+}

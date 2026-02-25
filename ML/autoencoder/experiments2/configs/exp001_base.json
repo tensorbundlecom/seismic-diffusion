@@ -1,0 +1,164 @@
+{
+  "experiment": {
+    "name": "exp001",
+    "run_tag": "base",
+    "seed": 42
+  },
+  "data": {
+    "data_root": "data/external_dataset/extracted/data",
+    "waveform_dir": "data/external_dataset/extracted/data/filtered_waveforms/HH",
+    "event_catalog": "data/external_dataset/extracted/data/events/20140101_20251101_0.0_9.0_9_339.txt",
+    "phase_pick_dir": "data/external_dataset/extracted/data/phase_picks",
+    "station_list_file": "data/station_list_external_full.json",
+    "sampling_rate_hz": 100.0,
+    "component": "Z"
+  },
+  "split": {
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "test_ratio": 0.1,
+    "ood_event_ratio": 0.1,
+    "ood_policy": "latest_by_origin_time"
+  },
+  "stft": {
+    "n_fft": 256,
+    "win_length": 256,
+    "hop_length": 32,
+    "window": "hann",
+    "drop_nyquist": true,
+    "target_freq_bins": 128,
+    "target_time_frames": 220,
+    "pad_crop_policy": "right"
+  },
+  "conditions": {
+    "numeric_feature_order": [
+      "magnitude",
+      "repi_km",
+      "depth_km",
+      "azimuth_sin",
+      "azimuth_cos",
+      "tP_ref_s",
+      "tS_ref_s",
+      "dtPS_ref_s"
+    ],
+    "velocity_model_1d": [
+      {
+        "z_top_km": 0.0,
+        "z_bot_km": 5.0,
+        "vp_km_s": 5.5,
+        "vs_km_s": 3.2
+      },
+      {
+        "z_top_km": 5.0,
+        "z_bot_km": 15.0,
+        "vp_km_s": 6.0,
+        "vs_km_s": 3.5
+      },
+      {
+        "z_top_km": 15.0,
+        "z_bot_km": 35.0,
+        "vp_km_s": 6.5,
+        "vs_km_s": 3.7
+      }
+    ]
+  },
+  "normalization": {
+    "eps": 1e-8,
+    "stft_scale_mode": "global_rms_train_only",
+    "max_samples_for_stft_rms": null
+  },
+  "model": {
+    "latent_dim": 128,
+    "station_embedding_dim": 16,
+    "condition_hidden_dim": 128,
+    "encoder_channels": [
+      32,
+      64,
+      128,
+      256
+    ],
+    "decoder_channels": [
+      256,
+      128,
+      64,
+      32
+    ]
+  },
+  "loss": {
+    "lambda_complex": 1.0,
+    "lambda_logmag": 1.0,
+    "free_bits_per_dim": 0.03,
+    "beta_max": 1.0,
+    "beta_warmup_epochs": 30
+  },
+  "train": {
+    "epochs": 180,
+    "batch_size": 64,
+    "num_workers": 8,
+    "learning_rate": 0.0002,
+    "weight_decay": 0.0001,
+    "grad_clip_norm": 1.0,
+    "scheduler_factor": 0.5,
+    "scheduler_patience": 6,
+    "early_stop_min_epochs": 40,
+    "early_stop_patience": 20,
+    "early_stop_min_delta": 5e-05,
+    "log_every_steps": 50,
+    "eval_every_epochs": 1,
+    "cond_eval_subset_size": 1024,
+    "save_topk_cond_candidates": 3,
+    "use_weighted_sampler": false,
+    "weighted_sampler_alpha": 0.5,
+    "weighted_sampler_wmax": 3.0
+  },
+  "evaluation": {
+    "k_samples_sweep": 8,
+    "k_samples_final": 32,
+    "seed_bank_base": 20260225,
+    "onset_picker": {
+      "smooth_frames": 3,
+      "p_window_sec": 4.0,
+      "s_window_sec": 6.0,
+      "s_min_after_p_sec": 1.0,
+      "confidence_threshold": 2.5
+    },
+    "metric_bands_hz": {
+      "low": [
+        0.5,
+        2.0
+      ],
+      "mid": [
+        2.0,
+        8.0
+      ],
+      "high": [
+        8.0,
+        20.0
+      ]
+    },
+    "condgen_pre_gate": {
+      "min_onset_evaluable_rate": 0.7,
+      "max_onset_failure_p": 0.3,
+      "max_onset_failure_s": 0.35,
+      "max_abs_xcorr_lag_s": 2.5
+    },
+    "condgen_calibration_runs": 6,
+    "condgen_composite_weights": {
+      "spec": 0.35,
+      "time": 0.45,
+      "shape": 0.2
+    }
+  },
+  "imbalance_guardrails": {
+    "tail_bin_min_improvement_pct": 5.0,
+    "all_bin_max_degradation_pct": 8.0,
+    "mid_bin_max_degradation_pct": 10.0
+  },
+  "artifacts": {
+    "protocol_dir": "ML/autoencoder/experiments2/protocol",
+    "frozen_split_file": "ML/autoencoder/experiments2/protocol/frozen_event_splits_exp001.json",
+    "manifest_file": "ML/autoencoder/experiments2/protocol/manifest_exp001.jsonl",
+    "normalization_stats_file": "ML/autoencoder/experiments2/protocol/normalization_stats_exp001.json",
+    "run_root": "ML/autoencoder/experiments2/runs/exp001"
+  }
+}

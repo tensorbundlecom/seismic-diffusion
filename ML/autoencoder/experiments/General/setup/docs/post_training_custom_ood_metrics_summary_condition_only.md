@@ -1,18 +1,19 @@
 # Post-Training Custom OOD (HH-only) Metrics Summary
 
 This summary compares all models on the custom post-training OOD set (HH-only, station subset).
+Inference mode: `condition_only`.
 
 ## Metrics Table
 
 | Model | SSIM | LSD | SC | S-Corr | STA/LTA Err | MR-LSD | Arias Err | Env Corr | DTW | XCorr |
 |:--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| Baseline | 0.6349 | 2.2125 | 0.1911 | 0.9705 | 0.0639 | 1.6669 | 0.4178 | 0.5763 | 11212.07 | 0.2278 |
-| FullCov | 0.6075 | 1.9000 | 0.2208 | 0.9607 | 0.0863 | 1.8472 | 0.4096 | 0.5729 | 11757.54 | 0.2124 |
-| Flow | 0.6002 | 2.1242 | 0.1918 | 0.9701 | 0.0631 | 2.1895 | 0.3415 | 0.5846 | 12062.00 | 0.2036 |
-| LegacyCondBaseline | 0.6237 | 1.8123 | 0.1822 | 0.9731 | 0.0626 | 1.9670 | 0.3603 | 0.5996 | 11859.45 | 0.2179 |
-| LegacyCondFullCov | 0.6065 | 1.7589 | 0.2126 | 0.9639 | 0.0766 | 1.8381 | 0.5054 | 0.5693 | 11493.82 | 0.2003 |
-| LegacyCondFlow | 0.6221 | 1.8287 | 0.1991 | 0.9686 | 0.0931 | 1.7369 | 0.3094 | 0.5976 | 12190.66 | 0.2084 |
-| CVAE_MRLoss | 0.5864 | 2.0513 | 0.1951 | 0.9694 | 0.0611 | 2.2237 | 0.4562 | 0.5885 | 11722.73 | 0.1912 |
+| Baseline | 0.4257 | 2.5442 | 0.7819 | 0.5660 | 0.2089 | 3.1804 | 0.6927 | -0.1540 | 13606.01 | 0.1631 |
+| FullCov | 0.4217 | 2.5244 | 0.7509 | 0.5756 | 0.2120 | 3.0764 | 0.8383 | -0.1268 | 13634.18 | 0.1419 |
+| Flow | 0.2888 | 2.6118 | 0.6730 | 0.5933 | 0.1941 | 3.2959 | 0.9976 | -0.1449 | 13142.66 | 0.0841 |
+| WBaseline | 0.4339 | 2.0347 | 0.7346 | 0.5514 | 0.1808 | 3.0564 | 0.8822 | -0.1314 | 13434.35 | 0.1390 |
+| WFullCov | 0.4308 | 2.4770 | 0.7838 | 0.5920 | 0.2116 | 3.1976 | 0.7584 | -0.1402 | 13990.16 | 0.1683 |
+| WFlow | 0.3416 | 2.5140 | 0.6686 | 0.6001 | 0.2181 | 3.1900 | 0.9895 | -0.1695 | 13313.21 | 0.1235 |
+| CVAE_MRLoss | 0.4181 | 2.0035 | 0.7723 | 0.5558 | 0.1974 | 3.1407 | 0.8491 | -0.1453 | 13283.06 | 0.1319 |
 
 ## Metric Definitions
 
@@ -30,16 +31,16 @@ This summary compares all models on the custom post-training OOD set (HH-only, s
 ## Overall Interpretation
 
 Best-per-metric highlights:
-- `ssim`: **Baseline**
-- `lsd`: **LegacyCondFullCov**
-- `sc`: **LegacyCondBaseline**
-- `s_corr`: **LegacyCondBaseline**
-- `sta_lta_err`: **CVAE_MRLoss**
-- `mr_lsd`: **Baseline**
-- `arias_err`: **LegacyCondFlow**
-- `env_corr`: **LegacyCondBaseline**
-- `dtw`: **Baseline**
-- `xcorr`: **Baseline**
+- `ssim`: **WBaseline**
+- `lsd`: **CVAE_MRLoss**
+- `sc`: **WFlow**
+- `s_corr`: **WFlow**
+- `sta_lta_err`: **WBaseline**
+- `mr_lsd`: **WBaseline**
+- `arias_err`: **Baseline**
+- `env_corr`: **FullCov**
+- `dtw`: **Flow**
+- `xcorr`: **WFullCov**
 General interpretation:
 The summary shows trade-offs between structural similarity (SSIM/S-Corr), spectral fidelity (LSD/MR-LSD), energy matching (Arias Err), and temporal alignment (DTW/XCorr).
 Models that improve LSD or MR-LSD may not lead on SSIM, indicating sharper spectral detail at some cost to global structure.

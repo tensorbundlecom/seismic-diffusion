@@ -1,0 +1,47 @@
+{
+  "run": {
+    "name": "diff_unet1d_w_plus_c_v1"
+  },
+  "data": {
+    "train_cache": "ML/autoencoder/experiments/LegacyCondDiffusion/data_cache/train_latent_cache.pt",
+    "val_cache": "ML/autoencoder/experiments/LegacyCondDiffusion/data_cache/val_latent_cache.pt",
+    "stats_file": "ML/autoencoder/experiments/LegacyCondDiffusion/data_cache/latent_stats.pt"
+  },
+  "model": {
+    "denoiser": "unet1d",
+    "latent_dim": 128,
+    "w_dim": 64,
+    "c_phys_dim": 4,
+    "cond_mode": "w_plus_c",
+    "hidden_dim": 512,
+    "depth": 6,
+    "dropout": 0.0,
+    "base_channels": 64
+  },
+  "diffusion": {
+    "t_min": 0.01,
+    "t_max": 1.0,
+    "sampler": "heun",
+    "sampler_steps": 25
+  },
+  "train": {
+    "seed": 42,
+    "epochs": 100,
+    "batch_size": 256,
+    "num_workers": 8,
+    "lr": 0.0001,
+    "loss_weight_mode": "none",
+    "grad_clip_norm": 1.0,
+    "log_every_batches": 100,
+    "save_every_epochs": 10
+  },
+  "eval": {
+    "stage1_checkpoint": "ML/autoencoder/experiments/LegacyCondDiffusion/checkpoints/stage1_wbaseline_best.pt",
+    "diffusion_checkpoint": "ML/autoencoder/experiments/LegacyCondDiffusion/checkpoints/diff_unet1d_w_plus_c_v1_best.pt",
+    "ood_data_dir": "data/ood_waveforms/post_training_custom/filtered",
+    "ood_catalog": "data/events/ood_catalog_post_training.txt",
+    "station_list_file": "data/station_list_external_full.json",
+    "station_subset_file": "data/station_list_post_custom.json",
+    "output_metrics_json": "ML/autoencoder/experiments/LegacyCondDiffusion/results/post_training_custom_ood_metrics_diff_unet1d_w_plus_c_v1.json"
+  }
+}

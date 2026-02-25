@@ -11,7 +11,7 @@ AGENTS.md
 logs/
 ML/autoencoder/experiments/**/visualizations/**/waveforms/
 ML/autoencoder/experiments/**/visualizations/**/specs/fas/
-ML/autoencoder/experiments/WAblation/logs/
+ML/autoencoder/experiments/LegacyCondAblation/logs/
 ML/autoencoder/experiments/**/*.out
 ML/autoencoder/experiments/**/*.pid
 ML/autoencoder/experiments/**/__pycache__/*.pyc
@@ -24,3 +24,11 @@ ML/autoencoder/experiments/LatentShapeVAE/results/prior_sampling_*/
 ML/autoencoder/experiments/LatentShapeVAE/results/latent_var_outlier_audit_*/
 ML/autoencoder/experiments/LatentShapeVAE/results/elbo_terms_*/
 ML/autoencoder/experiments/LatentShapeVAE/results/lsv_*/
+
+# experiments2 generated artifacts
+ML/autoencoder/experiments2/runs/exp001/run_*/
+ML/autoencoder/experiments2/protocol/manifest_exp001*.jsonl
+ML/autoencoder/experiments2/protocol/manifest_exp001*.jsonl.meta.json
+ML/autoencoder/experiments2/protocol/frozen_event_splits_exp001*.json
+ML/autoencoder/experiments2/protocol/normalization_stats_exp001*.json
+2410.19343v2.pdf

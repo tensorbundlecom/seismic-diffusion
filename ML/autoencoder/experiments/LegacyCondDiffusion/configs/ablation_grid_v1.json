@@ -1,0 +1,6 @@
+{
+  "base_config": "ML/autoencoder/experiments/LegacyCondDiffusion/configs/diffusion_resmlp_default.json",
+  "denoisers": ["resmlp", "unet1d"],
+  "cond_modes": ["w_plus_c", "w_only", "c_only"]
+}
+

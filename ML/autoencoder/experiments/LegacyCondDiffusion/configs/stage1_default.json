@@ -1,0 +1,37 @@
+{
+  "data": {
+    "data_dir": "data/external_dataset/extracted/data/filtered_waveforms",
+    "event_file": "data/external_dataset/extracted/data/events/20140101_20251101_0.0_9.0_9_339.txt",
+    "station_list_file": "data/station_list_external_full.json",
+    "channels": ["HH"],
+    "magnitude_col": "ML",
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "test_ratio": 0.1,
+    "split_file": "ML/autoencoder/experiments/LegacyCondDiffusion/protocol/frozen_event_splits_v1.json",
+    "mag_min": 0.0,
+    "mag_max": 9.0
+  },
+  "model": {
+    "in_channels": 3,
+    "latent_dim": 128,
+    "w_dim": 64,
+    "station_emb_dim": 16,
+    "map_hidden_dim": 128
+  },
+  "train": {
+    "seed": 42,
+    "epochs": 100,
+    "batch_size": 64,
+    "num_workers": 16,
+    "lr": 0.0001,
+    "beta": 0.1,
+    "log_every_batches": 200,
+    "save_every_epochs": 10
+  },
+  "cache": {
+    "batch_size": 64,
+    "num_workers": 8
+  }
+}
+

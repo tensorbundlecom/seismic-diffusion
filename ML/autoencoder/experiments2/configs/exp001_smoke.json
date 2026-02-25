@@ -1,0 +1,32 @@
+{
+  "extends": "ML/autoencoder/experiments2/configs/exp001_base.json",
+  "experiment": {
+    "run_tag": "smoke",
+    "seed": 7
+  },
+  "data": {
+    "max_manifest_files": 256
+  },
+  "split": {
+    "ood_event_ratio": 0.05
+  },
+  "normalization": {
+    "max_samples_for_stft_rms": 256
+  },
+  "train": {
+    "epochs": 2,
+    "batch_size": 8,
+    "num_workers": 0,
+    "log_every_steps": 5,
+    "cond_eval_subset_size": 64
+  },
+  "evaluation": {
+    "k_samples_sweep": 2,
+    "k_samples_final": 4
+  },
+  "artifacts": {
+    "frozen_split_file": "ML/autoencoder/experiments2/protocol/frozen_event_splits_exp001_smoke.json",
+    "manifest_file": "ML/autoencoder/experiments2/protocol/manifest_exp001_smoke.jsonl",
+    "normalization_stats_file": "ML/autoencoder/experiments2/protocol/normalization_stats_exp001_smoke.json"
+  }
+}

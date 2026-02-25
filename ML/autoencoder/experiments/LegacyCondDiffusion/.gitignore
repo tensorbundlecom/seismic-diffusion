@@ -1,0 +1,20 @@
+# Runtime artifacts
+checkpoints/*.pt
+logs/**/*.log
+logs/**/*.pid
+data_cache/*.pt
+results/*.json
+results/generated_samples/
+visualizations/generated_samples/
+
+# Keep folder placeholders
+!checkpoints/.gitkeep
+!logs/train/.gitkeep
+!logs/cache/.gitkeep
+!logs/diffusion/.gitkeep
+!logs/eval/.gitkeep
+!logs/ablation/.gitkeep
+!data_cache/.gitkeep
+!results/.gitkeep
+!visualizations/.gitkeep
+
