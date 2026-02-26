@@ -12,7 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from tqdm import tqdm
 
-from model import ConvAutoencoder, VariationalAutoencoder
+from model import VariationalAutoencoder
 from stft_dataset import SeismicSTFTDataset, collate_fn
 
 
@@ -34,7 +34,7 @@ class Trainer:
         config,
         test_loader=None,
         log_interval=10,
-        is_vae=False,
+        is_vae=True,
         beta=1.0,
     ):
         self.model = model
@@ -489,13 +489,10 @@ def parse_args():
                         help='Length of the FFT used')
     
     # Model arguments
-    parser.add_argument('--model_type', type=str, default='vae',
-                        choices=['autoencoder', 'vae'],
-                        help='Type of model to train (autoencoder or vae)')
-    parser.add_argument('--latent_dim', type=int, default=256,
-                        help='Dimension of latent space')
-    parser.add_argument('--beta', type=float, default=0.1,
-                        help='Beta parameter for VAE loss (beta-VAE). Higher values encourage stronger disentanglement.')
+    parser.add_argument('--latent_channels', type=int, default=4,
+                        help='Number of channels in the latent space (4 gives 45x compression for 129x111 inputs)')
+    parser.add_argument('--beta', type=float, default=1.0,
+                        help='Beta parameter for VAE loss. 1.0 = standard VAE; keeps the latent close to N(0,I) for diffusion.')
     
     # Training arguments
     parser.add_argument('--batch_size', type=int, default=16,
@@ -608,12 +605,8 @@ def main():
     )
     
     # Create model
-    print(f"Creating {args.model_type} model...")
-    if args.model_type == 'vae':
-        model = VariationalAutoencoder(in_channels=3, latent_channels=args.latent_dim)
-        print(f"Using beta-VAE with beta={args.beta}")
-    else:
-        model = ConvAutoencoder(in_channels=3, latent_dim=args.latent_dim)
+    model = VariationalAutoencoder(in_channels=3, latent_channels=args.latent_channels)
+    print(f"Using beta-VAE with beta={args.beta}")
     
     model = model.to(device)
     
@@ -649,7 +642,6 @@ def main():
         config=config,
         test_loader=test_loader,
         log_interval=args.log_interval,
-        is_vae=(args.model_type == 'vae'),
         beta=args.beta,
     )
     

@@ -11,3 +11,5 @@ ML/diffusion/embeddings/*
 ML/diffusion/checkpoints/*
 ML/diffusion/logs/*
 data.zip
+ML/diffusion/runs/diffusion/*
+ML/autoencoder/runs/diffusion/*

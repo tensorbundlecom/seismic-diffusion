@@ -9,20 +9,22 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from model import ConvAutoencoder
-from stft_dataset import SeismicSTFTDataset
+from .model import VariationalAutoencoder
+from .stft_dataset import SeismicSTFTDataset
 
 
-def load_model(checkpoint_path, device='cuda'):
+def load_model(checkpoint_path, device='cuda', model_type=VariationalAutoencoder):
     """Load model from checkpoint."""
     checkpoint = torch.load(checkpoint_path, map_location=device)
     
     # Get model config
     config = checkpoint.get('config', {})
-    latent_dim = config.get('latent_dim', 128)
     
     # Create model
-    model = ConvAutoencoder(in_channels=3, latent_dim=latent_dim)
+    if model_type == VariationalAutoencoder:
+        latent_channels = config.get('latent_channels', 128)
+        model = model_type(in_channels=3, latent_channels=latent_channels)
+    
     model.load_state_dict(checkpoint['model_state_dict'])
     model = model.to(device)
     model.eval()
