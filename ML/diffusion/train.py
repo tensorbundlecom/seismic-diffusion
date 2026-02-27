@@ -1,6 +1,8 @@
 from model import DiffusionUNet2D, create_conditioning_vector
 import torch
 import json
+import shutil
+from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from torch.utils.data import TensorDataset, DataLoader
@@ -15,8 +17,8 @@ NUM_EPOCHS = 500
 BATCH_SIZE = 64
 LR = 1e-4
 NUM_TRAIN_TIMESTEPS = 1000
-LOG_EVERY_N_EPOCHS = 5
-CHECKPOINT_EVERY_N_EPOCHS = 25
+LOG_EVERY_N_EPOCHS = 1
+CHECKPOINT_EVERY_N_EPOCHS = 1
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 writer = SummaryWriter(log_dir="runs/diffusion")
@@ -184,6 +186,13 @@ for epoch in range(NUM_EPOCHS):
         ckpt_path = f"checkpoints/epoch_{epoch + 1}"
         model.model.save_pretrained(ckpt_path)
         print(f"Checkpoint saved to {ckpt_path}")
+        # Keep only the last 3 checkpoints to save disk space
+        all_ckpts = sorted(
+            Path("checkpoints").glob("epoch_*"),
+            key=lambda p: int(p.name.split("_")[1])
+        )
+        for old in all_ckpts[:-3]:
+            shutil.rmtree(old)
 
 # --- Save model ---
 writer.close()

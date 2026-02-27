@@ -51,7 +51,28 @@ def embedding_to_figure(tensor, title):
     return fig
 
 
-model, config = load_model("../autoencoder/checkpoints/20260227_010846/best_model.pt", device='cuda')
+def _find_latest_ae_checkpoint():
+    """Return the path to the most recent best_model.pt under ML/autoencoder/checkpoints/."""
+    ckpts = sorted(Path(__file__).resolve().parent.parent.joinpath(
+        "autoencoder", "checkpoints").glob("*/best_model.pt"))
+    if not ckpts:
+        raise FileNotFoundError("No autoencoder checkpoint found. Train it first.")
+    return str(ckpts[-1])
+
+_ae_model = None
+
+def _get_ae_model():
+    """Lazy-load the autoencoder (so importing utils.py has no side-effects)."""
+    global _ae_model
+    if _ae_model is None:
+        import torch
+        ckpt = _find_latest_ae_checkpoint()
+        _ae_model, _ = load_model(ckpt, device="cuda" if torch.cuda.is_available() else "cpu")
+        _ae_model.eval()
+    return _ae_model
+
 def decode_embedding(embedding):
-    decoded_image = model.decode(embedding.unsqueeze(0).to('cuda'))[0].cpu()
-    return decoded_image
+    ae = _get_ae_model()
+    device = next(ae.parameters()).device
+    decoded = ae.decode(embedding.unsqueeze(0).to(device))[0].cpu()
+    return decoded
