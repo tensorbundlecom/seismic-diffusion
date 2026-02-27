@@ -1,0 +1,11 @@
+{
+  "source_audit": "ML/autoencoder/experiments2/protocol/reports/audit_externaldataset_manifest_consistency.json",
+  "excluded_pairs": [
+    "20151130230709_BALB",
+    "20151130230709_TVSB"
+  ],
+  "excluded_hits_in_audit_missing_phase_pick": 2,
+  "effective_drop_counts_nonexcluded": {},
+  "effective_dropped_nonexcluded": 0,
+  "effective_drop_rate_nonexcluded_pct": 0.0
+}

@@ -61,6 +61,12 @@ class CondgenCompositeCalibrator:
 
     def _passes_gate(self, metrics_mean: Mapping[str, float]) -> tuple[bool, Dict[str, bool]]:
         gate_cfg = self.cfg["evaluation"]["condgen_pre_gate"]
+        lag_abs_mean = float(
+            metrics_mean.get(
+                "abs_xcorr_lag_s",
+                abs(float(metrics_mean.get("xcorr_lag_s", 1e9))),
+            )
+        )
         checks = {
             "onset_evaluable_rate": float(metrics_mean.get("onset_evaluable_rate", 0.0))
             >= float(gate_cfg["min_onset_evaluable_rate"]),
@@ -68,8 +74,7 @@ class CondgenCompositeCalibrator:
             <= float(gate_cfg["max_onset_failure_p"]),
             "onset_failure_rate_s": float(metrics_mean.get("onset_failure_rate_s", 1.0))
             <= float(gate_cfg["max_onset_failure_s"]),
-            "abs_xcorr_lag_s": abs(float(metrics_mean.get("xcorr_lag_s", 1e9)))
-            <= float(gate_cfg["max_abs_xcorr_lag_s"]),
+            "abs_xcorr_lag_s": lag_abs_mean <= float(gate_cfg["max_abs_xcorr_lag_s"]),
         }
         return all(checks.values()), checks
 
@@ -103,6 +108,21 @@ class CondgenCompositeCalibrator:
         # default lower-better
         return zscore_robust(value, med, scale)
 
+    def composite_from_metrics(self, metrics_mean: Mapping[str, float]) -> Optional[Dict[str, float]]:
+        if self.calib_stats is None:
+            return None
+        z_spec = np.mean([self._z_for_key(k, float(metrics_mean.get(k, np.nan))) for k in self.SPEC_KEYS])
+        z_time = np.mean([self._z_for_key(k, float(metrics_mean.get(k, np.nan))) for k in self.TIME_KEYS])
+        z_shape = np.mean([self._z_for_key(k, float(metrics_mean.get(k, np.nan))) for k in self.SHAPE_KEYS])
+        w = self.cfg["evaluation"]["condgen_composite_weights"]
+        z_comp = float(w["spec"]) * float(z_spec) + float(w["time"]) * float(z_time) + float(w["shape"]) * float(z_shape)
+        return {
+            "z_spec": float(z_spec),
+            "z_time": float(z_time),
+            "z_shape": float(z_shape),
+            "z_comp": float(z_comp),
+        }
+
     def score(
         self,
         metrics_mean: Mapping[str, float],
@@ -122,20 +142,14 @@ class CondgenCompositeCalibrator:
         }
         if not gate_ok:
             return out
-        if self.calib_stats is None:
+        comp_vals = self.composite_from_metrics(metrics_mean)
+        if comp_vals is None:
             return out
 
-        z_spec = np.mean([self._z_for_key(k, float(metrics_mean.get(k, np.nan))) for k in self.SPEC_KEYS])
-        z_time = np.mean([self._z_for_key(k, float(metrics_mean.get(k, np.nan))) for k in self.TIME_KEYS])
-        z_shape = np.mean([self._z_for_key(k, float(metrics_mean.get(k, np.nan))) for k in self.SHAPE_KEYS])
-
-        w = self.cfg["evaluation"]["condgen_composite_weights"]
-        z_comp = float(w["spec"]) * float(z_spec) + float(w["time"]) * float(z_time) + float(w["shape"]) * float(z_shape)
-
-        out["z_spec"] = float(z_spec)
-        out["z_time"] = float(z_time)
-        out["z_shape"] = float(z_shape)
-        out["z_comp"] = float(z_comp)
+        out["z_spec"] = comp_vals["z_spec"]
+        out["z_time"] = comp_vals["z_time"]
+        out["z_shape"] = comp_vals["z_shape"]
+        out["z_comp"] = comp_vals["z_comp"]
         return out
 
 
@@ -339,6 +353,129 @@ def _write_history_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
             writer.writerow(row)
 
 
+def _is_valid_by_bin_mean(obj: Any) -> bool:
+    return isinstance(obj, Mapping) and all(k in obj for k in ("all", "m3to5", "ge5"))
+
+
+def _extract_by_bin_mean_from_payload(payload: Mapping[str, Any]) -> Optional[Dict[str, Dict[str, float]]]:
+    candidates = [
+        payload.get("by_bin_mean"),
+        payload.get("condition_only", {}).get("by_bin_mean") if isinstance(payload.get("condition_only"), Mapping) else None,
+        payload.get("cond_eval", {}).get("by_bin_mean") if isinstance(payload.get("cond_eval"), Mapping) else None,
+        payload.get("rerank", {}).get("selected", {}).get("cond_eval", {}).get("by_bin_mean")
+        if isinstance(payload.get("rerank"), Mapping)
+        else None,
+        payload.get("splits", {}).get("val", {}).get("condition_only", {}).get("by_bin_mean")
+        if isinstance(payload.get("splits"), Mapping)
+        else None,
+    ]
+    for cand in candidates:
+        if not _is_valid_by_bin_mean(cand):
+            continue
+        out: Dict[str, Dict[str, float]] = {}
+        for bname in ("all", "m3to5", "ge5"):
+            metrics = cand[bname]
+            if not isinstance(metrics, Mapping):
+                break
+            parsed: Dict[str, float] = {}
+            for k, v in metrics.items():
+                try:
+                    fv = float(v)
+                except Exception:
+                    continue
+                if np.isfinite(fv):
+                    parsed[str(k)] = fv
+            out[bname] = parsed
+        if all(b in out for b in ("all", "m3to5", "ge5")):
+            return out
+    return None
+
+
+def _load_imbalance_reference_by_bin(path: str | Path) -> Dict[str, Dict[str, float]]:
+    payload = load_json(path)
+    by_bin = _extract_by_bin_mean_from_payload(payload)
+    if by_bin is None:
+        raise ValueError(
+            "Could not locate by_bin_mean in imbalance guardrail reference file. "
+            "Expected one of: by_bin_mean, condition_only.by_bin_mean, cond_eval.by_bin_mean, "
+            "rerank.selected.cond_eval.by_bin_mean, splits.val.condition_only.by_bin_mean."
+        )
+    return by_bin
+
+
+def _pct_improvement_lower_better(reference: float, candidate: float, eps: float = 1e-8) -> float:
+    denom = max(abs(float(reference)), float(eps))
+    return (float(reference) - float(candidate)) / denom * 100.0
+
+
+def _evaluate_imbalance_guardrails(
+    calibrator: CondgenCompositeCalibrator,
+    candidate_by_bin_mean: Mapping[str, Mapping[str, float]],
+    reference_by_bin_mean: Mapping[str, Mapping[str, float]],
+    guard_cfg: Mapping[str, Any],
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {
+        "enabled": True,
+        "ready": calibrator.calib_stats is not None,
+        "pass": False,
+    }
+    if calibrator.calib_stats is None:
+        out["reason"] = "calibration_not_ready"
+        return out
+
+    comp_ref: Dict[str, float] = {}
+    comp_cand: Dict[str, float] = {}
+    for bname in ("all", "m3to5", "ge5"):
+        ref_metrics = reference_by_bin_mean.get(bname, {})
+        cand_metrics = candidate_by_bin_mean.get(bname, {})
+        ref_comp = calibrator.composite_from_metrics(ref_metrics)
+        cand_comp = calibrator.composite_from_metrics(cand_metrics)
+        if ref_comp is None or cand_comp is None:
+            out["reason"] = f"missing_composite_for_bin:{bname}"
+            return out
+        comp_ref[bname] = float(ref_comp["z_comp"])
+        comp_cand[bname] = float(cand_comp["z_comp"])
+
+    imp_ge5 = _pct_improvement_lower_better(comp_ref["ge5"], comp_cand["ge5"])
+    imp_all = _pct_improvement_lower_better(comp_ref["all"], comp_cand["all"])
+    imp_mid = _pct_improvement_lower_better(comp_ref["m3to5"], comp_cand["m3to5"])
+    deg_all = max(0.0, -imp_all)
+    deg_mid = max(0.0, -imp_mid)
+
+    tail_min = float(guard_cfg.get("tail_bin_min_improvement_pct", 5.0))
+    all_max = float(guard_cfg.get("all_bin_max_degradation_pct", 8.0))
+    mid_max = float(guard_cfg.get("mid_bin_max_degradation_pct", 10.0))
+
+    checks = {
+        "tail_improvement_ge5": imp_ge5 >= tail_min,
+        "all_degradation": deg_all <= all_max,
+        "mid_degradation_m3to5": deg_mid <= mid_max,
+    }
+    out.update(
+        {
+            "pass": all(checks.values()),
+            "checks": checks,
+            "reference_z_comp_by_bin": comp_ref,
+            "candidate_z_comp_by_bin": comp_cand,
+            "improvement_pct": {
+                "ge5": float(imp_ge5),
+                "all": float(imp_all),
+                "m3to5": float(imp_mid),
+            },
+            "degradation_pct": {
+                "all": float(deg_all),
+                "m3to5": float(deg_mid),
+            },
+            "thresholds_pct": {
+                "tail_bin_min_improvement_pct": tail_min,
+                "all_bin_max_degradation_pct": all_max,
+                "mid_bin_max_degradation_pct": mid_max,
+            },
+        }
+    )
+    return out
+
+
 def _rerank_condgen_candidates(
     candidates: Sequence[Mapping[str, Any]],
     model: torch.nn.Module,
@@ -347,6 +484,8 @@ def _rerank_condgen_candidates(
     device: torch.device,
     calibrator: CondgenCompositeCalibrator,
     cond_history_means: Sequence[Mapping[str, float]],
+    imbalance_reference_by_bin: Optional[Mapping[str, Mapping[str, float]]] = None,
+    imbalance_guard_cfg: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     if not candidates:
         return {"selected": None, "results": []}
@@ -368,16 +507,30 @@ def _rerank_condgen_candidates(
             max_samples=None,
         )
         comp = calibrator.score(cond_eval["mean"], cond_history_means)
+        if imbalance_reference_by_bin is not None and imbalance_guard_cfg is not None:
+            imbalance_guard = _evaluate_imbalance_guardrails(
+                calibrator=calibrator,
+                candidate_by_bin_mean=cond_eval["by_bin_mean"],
+                reference_by_bin_mean=imbalance_reference_by_bin,
+                guard_cfg=imbalance_guard_cfg,
+            )
+        else:
+            imbalance_guard = {"enabled": False, "pass": True}
         results.append(
             {
                 "epoch": int(c["epoch"]),
                 "checkpoint_path": str(ckpt_path),
                 "z_comp": comp["z_comp"],
                 "gate_ok": comp["gate_ok"],
+                "imbalance_guardrail": imbalance_guard,
                 "cond_eval": cond_eval,
             }
         )
-    valid = [r for r in results if r["gate_ok"] and r["z_comp"] is not None]
+    valid = [
+        r
+        for r in results
+        if r["gate_ok"] and r["z_comp"] is not None and bool(r["imbalance_guardrail"].get("pass", False))
+    ]
     if not valid:
         return {"selected": None, "results": results}
     selected = min(valid, key=lambda r: float(r["z_comp"]))
@@ -430,6 +583,25 @@ def main() -> None:
         len(split["test"]["indices"]),
         len(split["ood"]["indices"]),
     )
+
+    imbalance_guard_cfg = dict(cfg.get("imbalance_guardrails", {}))
+    imbalance_guard_enabled = bool(imbalance_guard_cfg.get("enabled", True))
+    imbalance_reference_by_bin: Optional[Dict[str, Dict[str, float]]] = None
+    if bool(cfg["train"]["use_weighted_sampler"]) and imbalance_guard_enabled:
+        ref_path = imbalance_guard_cfg.get("reference_cond_eval_json")
+        if not ref_path:
+            raise ValueError(
+                "use_weighted_sampler=true requires imbalance_guardrails.reference_cond_eval_json "
+                "for D015 baseline comparison."
+            )
+        imbalance_reference_by_bin = _load_imbalance_reference_by_bin(ref_path)
+        logger.info("Imbalance guardrails enabled with reference: %s", ref_path)
+    else:
+        logger.info(
+            "Imbalance guardrails inactive in this run (use_weighted_sampler=%s, enabled=%s).",
+            bool(cfg["train"]["use_weighted_sampler"]),
+            imbalance_guard_enabled,
+        )
 
     loaders = _build_dataloaders(cfg, manifest, split, norm_stats)
     num_stations = len(load_json(cfg["data"]["station_list_file"]))
@@ -510,11 +682,21 @@ def main() -> None:
             cond_mean = dict(cond_eval["mean"])
             cond_history_means.append(cond_mean)
             comp = calibrator.score(cond_mean, cond_history_means)
+            if imbalance_reference_by_bin is not None:
+                imbalance_guard = _evaluate_imbalance_guardrails(
+                    calibrator=calibrator,
+                    candidate_by_bin_mean=cond_eval["by_bin_mean"],
+                    reference_by_bin_mean=imbalance_reference_by_bin,
+                    guard_cfg=imbalance_guard_cfg,
+                )
+            else:
+                imbalance_guard = {"enabled": False, "pass": True}
 
             row["cond_eval_k"] = int(cond_eval["k_samples"])
             row["cond_z_comp"] = comp["z_comp"]
             row["cond_gate_ok"] = int(bool(comp["gate_ok"]))
             row["cond_calibrated"] = int(bool(comp["calibrated"]))
+            row["cond_imbalance_guard_pass"] = int(bool(imbalance_guard.get("pass", False)))
 
             save_json(
                 run_paths["metrics"] / f"cond_eval_epoch_{epoch:03d}.json",
@@ -522,10 +704,11 @@ def main() -> None:
                     "epoch": epoch,
                     "cond_eval": cond_eval,
                     "composite": comp,
+                    "imbalance_guardrail": imbalance_guard,
                 },
             )
 
-            if comp["gate_ok"] and comp["z_comp"] is not None:
+            if comp["gate_ok"] and comp["z_comp"] is not None and bool(imbalance_guard.get("pass", False)):
                 score = float(comp["z_comp"])
                 if score < best_cond_score:
                     best_cond_score = score
@@ -554,6 +737,8 @@ def main() -> None:
                 for stale in run_paths["tmp"].glob("cond_candidate_epoch_*.pt"):
                     if stale not in keep_paths:
                         stale.unlink(missing_ok=True)
+            elif comp["gate_ok"] and comp["z_comp"] is not None:
+                logger.info("[E%03d] condgen candidate rejected by imbalance guardrail.", epoch)
 
         history_rows.append(row)
         logger.info(
@@ -577,6 +762,8 @@ def main() -> None:
         device=device,
         calibrator=calibrator,
         cond_history_means=cond_history_means,
+        imbalance_reference_by_bin=imbalance_reference_by_bin,
+        imbalance_guard_cfg=imbalance_guard_cfg if imbalance_reference_by_bin is not None else None,
     )
 
     selected = rerank["selected"]
@@ -587,6 +774,15 @@ def main() -> None:
         selected_payload = torch.load(src_ckpt, map_location=device)
         model.load_state_dict(selected_payload["model_state_dict"])
         logger.info("Selected best_condgen checkpoint from epoch %s", selected["epoch"])
+    elif imbalance_reference_by_bin is not None:
+        logger.error(
+            "No condgen candidate passed D015 imbalance guardrail in weighted run; "
+            "stage-2 run is rejected."
+        )
+        raise RuntimeError(
+            "D015 guardrail rejection: no candidate passed imbalance guardrail. "
+            "Inspect metrics/cond_eval_epoch_*.json and rerank results."
+        )
     else:
         # Fallback: copy best val checkpoint when no valid condgen candidate exists.
         src_ckpt = run_paths["checkpoints"] / "best_val_loss.pt"
@@ -607,6 +803,15 @@ def main() -> None:
         "best_condgen_score_sweep": None if not np.isfinite(best_cond_score) else best_cond_score,
         "num_epochs_finished": len(history_rows),
         "cond_history_len": len(cond_history_means),
+        "imbalance_guardrail": {
+            "active": imbalance_reference_by_bin is not None,
+            "reference_file": imbalance_guard_cfg.get("reference_cond_eval_json") if imbalance_reference_by_bin is not None else None,
+            "thresholds_pct": {
+                "tail_bin_min_improvement_pct": imbalance_guard_cfg.get("tail_bin_min_improvement_pct"),
+                "all_bin_max_degradation_pct": imbalance_guard_cfg.get("all_bin_max_degradation_pct"),
+                "mid_bin_max_degradation_pct": imbalance_guard_cfg.get("mid_bin_max_degradation_pct"),
+            },
+        },
         "rerank": rerank,
         "recon_eval": {
             "val": recon_val,

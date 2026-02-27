@@ -1,0 +1,48 @@
+{
+  "feature_order": [
+    "magnitude",
+    "repi_km",
+    "depth_km",
+    "azimuth_sin",
+    "azimuth_cos",
+    "tP_ref_s",
+    "tS_ref_s",
+    "dtPS_ref_s"
+  ],
+  "feature_mean": [
+    2.130810810810812,
+    68.92883344647568,
+    8.810810810810812,
+    0.36199372965529925,
+    0.4947314230839729,
+    8.928495252625174,
+    17.469528581024758,
+    8.541033328399585
+  ],
+  "feature_std": [
+    0.567376029456696,
+    34.43987421973333,
+    3.670097118074586,
+    0.6040708260626758,
+    0.5092148817577014,
+    0.34283399016877836,
+    4.038060963156767,
+    4.152265080489175
+  ],
+  "stft_global_rms": 282.27374701505346,
+  "num_train_samples": 185,
+  "num_stft_rms_samples": 185,
+  "_meta": {
+    "manifest_num_rows": 256,
+    "manifest_sha256": "e8e2a70bda071fde8666a2aa8aa62b736673c4265bf224cbb2c6578c04889303",
+    "stft_signature": {
+      "n_fft": 256,
+      "win_length": 256,
+      "hop_length": 32,
+      "drop_nyquist": true,
+      "target_freq_bins": 128,
+      "target_time_frames": 220
+    },
+    "max_samples_for_stft_rms": 256
+  }
+}

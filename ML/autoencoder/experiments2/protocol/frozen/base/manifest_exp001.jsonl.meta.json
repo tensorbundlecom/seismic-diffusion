@@ -1,0 +1,23 @@
+{
+  "waveform_dir": "data/external_dataset/extracted/data/filtered_waveforms/HH",
+  "event_catalog": "data/external_dataset/extracted/data/events/20140101_20251101_0.0_9.0_9_339.txt",
+  "phase_pick_dir": "data/external_dataset/extracted/data/phase_picks",
+  "station_list_file": "data/station_list_external_full.json",
+  "max_manifest_files": null,
+  "num_rows": 88919,
+  "velocity_model_sha256": "8d5fe9a2a90d0d6eb1d2e223a6ddae138f9a35be20545b3cb964a4585ee8a681",
+  "excluded_pairs_sha256": "84613057690d376cac6b20b3b39802af13c6c13c8f0dceb2ddf3fede5efddc96",
+  "excluded_pairs_count": 2,
+  "fail_on_manifest_drop": true,
+  "max_manifest_drop_rate": 0.0,
+  "num_files_scanned": 88921,
+  "num_rows_dropped_total": 2,
+  "num_rows_dropped_nonexcluded": 0,
+  "excluded_row_count": 2,
+  "drop_rate_total": 2.2491874810224805e-05,
+  "drop_rate_nonexcluded": 0.0,
+  "drop_counts_by_reason": {
+    "excluded_event_station": 2
+  },
+  "manifest_sha256": "f544766eee675ea590b222c6bfccca1b3ff28a15cd9d6b459188d63f63212a46"
+}

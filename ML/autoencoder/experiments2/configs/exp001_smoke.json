@@ -25,8 +25,8 @@
     "k_samples_final": 4
   },
   "artifacts": {
-    "frozen_split_file": "ML/autoencoder/experiments2/protocol/frozen_event_splits_exp001_smoke.json",
-    "manifest_file": "ML/autoencoder/experiments2/protocol/manifest_exp001_smoke.jsonl",
-    "normalization_stats_file": "ML/autoencoder/experiments2/protocol/normalization_stats_exp001_smoke.json"
+    "frozen_split_file": "ML/autoencoder/experiments2/protocol/frozen/smoke/frozen_event_splits_exp001_smoke.json",
+    "manifest_file": "ML/autoencoder/experiments2/protocol/frozen/smoke/manifest_exp001_smoke.jsonl",
+    "normalization_stats_file": "ML/autoencoder/experiments2/protocol/frozen/smoke/normalization_stats_exp001_smoke.json"
   }
 }

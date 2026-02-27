@@ -146,7 +146,8 @@ class CVAEComplexSTFT(nn.Module):
         h = self.encoder(x).flatten(start_dim=1)
         h_joint = torch.cat([h, cond_state], dim=1)
         mu = self.fc_mu(h_joint)
-        logvar = self.fc_logvar(h_joint)
+        # Minimal numeric-stability guard for KL: keep posterior log-variance in a safe range.
+        logvar = torch.clamp(self.fc_logvar(h_joint), min=-8.0, max=4.0)
         return mu, logvar, cond_state
 
     @staticmethod

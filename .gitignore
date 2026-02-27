@@ -27,8 +27,4 @@ ML/autoencoder/experiments/LatentShapeVAE/results/lsv_*/
 
 # experiments2 generated artifacts
 ML/autoencoder/experiments2/runs/exp001/run_*/
-ML/autoencoder/experiments2/protocol/manifest_exp001*.jsonl
-ML/autoencoder/experiments2/protocol/manifest_exp001*.jsonl.meta.json
-ML/autoencoder/experiments2/protocol/frozen_event_splits_exp001*.json
-ML/autoencoder/experiments2/protocol/normalization_stats_exp001*.json
 2410.19343v2.pdf

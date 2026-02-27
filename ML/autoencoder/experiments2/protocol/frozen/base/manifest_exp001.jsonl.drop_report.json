@@ -1,0 +1,30 @@
+{
+  "num_files_scanned": 88921,
+  "num_rows_kept": 88919,
+  "num_rows_dropped_total": 2,
+  "num_rows_dropped_nonexcluded": 0,
+  "drop_rate_total": 2.2491874810224805e-05,
+  "drop_rate_nonexcluded": 0.0,
+  "drop_counts_by_reason": {
+    "excluded_event_station": 2
+  },
+  "drop_examples_by_reason": {
+    "excluded_event_station": [
+      {
+        "file_path": "data/external_dataset/extracted/data/filtered_waveforms/HH/20151130230709_BALB_HH.mseed",
+        "event_id": "20151130230709",
+        "station_code": "BALB",
+        "detail": "excluded by config"
+      },
+      {
+        "file_path": "data/external_dataset/extracted/data/filtered_waveforms/HH/20151130230709_TVSB_HH.mseed",
+        "event_id": "20151130230709",
+        "station_code": "TVSB",
+        "detail": "excluded by config"
+      }
+    ]
+  },
+  "excluded_pairs_count": 2,
+  "excluded_row_count": 2,
+  "excluded_pairs_sha256": "84613057690d376cac6b20b3b39802af13c6c13c8f0dceb2ddf3fede5efddc96"
+}

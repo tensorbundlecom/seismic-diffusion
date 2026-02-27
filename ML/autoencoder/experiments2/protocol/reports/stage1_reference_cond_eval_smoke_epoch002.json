@@ -1,0 +1,46 @@
+{
+  "source_run": "run_20260227_1730_smoke_protocol_layout_check",
+  "source_metric_file": "ML/autoencoder/experiments2/runs/exp001/run_20260227_1730_smoke_protocol_layout_check/metrics/cond_eval_epoch_002.json",
+  "source_epoch": 2,
+  "reference_type": "stage1_smoke_provisional",
+  "condition_only": {
+    "by_bin_mean": {
+      "all": {
+        "abs_xcorr_lag_s": 11.301818181818183,
+        "band_energy_ratio_error": 0.16721104762770914,
+        "complex_l1": 0.09388298067179593,
+        "envelope_corr": 0.20100092108055562,
+        "high_band_error": 0.2317055734721097,
+        "low_band_error": 0.10271652991121466,
+        "mr_lsd": 0.11019976369359277,
+        "onset_evaluable_rate": 0.3181818181818182,
+        "onset_failure_rate_p": 0.5681818181818181,
+        "onset_failure_rate_s": 0.5227272727272727,
+        "onset_mae_dtps_s": 6.02,
+        "onset_mae_p_s": 1.3753846153846152,
+        "onset_mae_s_s": 4.953535353535354,
+        "xcorr_lag_s": 9.920000000000002,
+        "xcorr_max": 0.44762934236363927
+      },
+      "lt3": {
+        "abs_xcorr_lag_s": 11.301818181818183,
+        "band_energy_ratio_error": 0.16721104762770914,
+        "complex_l1": 0.09388298067179593,
+        "envelope_corr": 0.20100092108055562,
+        "high_band_error": 0.2317055734721097,
+        "low_band_error": 0.10271652991121466,
+        "mr_lsd": 0.11019976369359277,
+        "onset_evaluable_rate": 0.3181818181818182,
+        "onset_failure_rate_p": 0.5681818181818181,
+        "onset_failure_rate_s": 0.5227272727272727,
+        "onset_mae_dtps_s": 6.02,
+        "onset_mae_p_s": 1.3753846153846152,
+        "onset_mae_s_s": 4.953535353535354,
+        "xcorr_lag_s": 9.920000000000002,
+        "xcorr_max": 0.44762934236363927
+      },
+      "m3to5": {},
+      "ge5": {}
+    }
+  }
+}

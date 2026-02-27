@@ -1,0 +1,13 @@
+{
+  "extends": "ML/autoencoder/experiments2/configs/exp001_base.json",
+  "experiment": {
+    "run_tag": "exp001_stage2_weighted"
+  },
+  "train": {
+    "use_weighted_sampler": true
+  },
+  "imbalance_guardrails": {
+    "enabled": true,
+    "reference_cond_eval_json": "ML/autoencoder/experiments2/protocol/reports/stage1_reference_cond_eval_smoke_epoch002.json"
+  }
+}

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -12,6 +14,7 @@ import numpy as np
 import torch
 from scipy import signal
 from torch.utils.data import Dataset
+from collections import Counter, defaultdict
 
 from .utils import ensure_dir, load_json, load_jsonl, save_json, save_jsonl
 
@@ -24,9 +27,38 @@ else:
     _OBSPY_IMPORT_ERROR = None
 
 
-EARTH_KM_PER_DEG = 111.19
+EARTH_RADIUS_KM = 6371.0
+EARTH_KM_PER_DEG = math.pi * EARTH_RADIUS_KM / 180.0
 _PHASE_PREFIX_P = ("P",)
 _PHASE_PREFIX_S = ("S",)
+
+
+def _to_utc_naive(dt: datetime) -> datetime:
+    """
+    Normalize datetime for robust ordering/subtraction.
+
+    - naive datetime -> keep as-is (assumed same reference frame)
+    - timezone-aware datetime -> convert to UTC and drop tzinfo
+    """
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _file_sha256(path: str | Path, chunk_size: int = 1024 * 1024) -> str:
+    h = hashlib.sha256()
+    with Path(path).open("rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _object_sha256(obj: Any) -> str:
+    data = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return hashlib.sha256(data).hexdigest()
 
 
 def _require_obspy() -> None:
@@ -62,11 +94,11 @@ def _parse_event_origin(row: Mapping[str, Any]) -> Optional[datetime]:
     if "." not in time_s:
         time_s = f"{time_s}.0"
     try:
-        return datetime.strptime(f"{date_s} {time_s}", "%Y.%m.%d %H:%M:%S.%f")
+        return _to_utc_naive(datetime.strptime(f"{date_s} {time_s}", "%Y.%m.%d %H:%M:%S.%f"))
     except ValueError:
         # Fallback if milliseconds are absent.
         try:
-            return datetime.strptime(f"{date_s} {time_s.split('.')[0]}", "%Y.%m.%d %H:%M:%S")
+            return _to_utc_naive(datetime.strptime(f"{date_s} {time_s.split('.')[0]}", "%Y.%m.%d %H:%M:%S"))
         except ValueError:
             return None
 
@@ -176,8 +208,67 @@ def _parse_phase_picks_targeted(
     return out
 
 
-def _velocity_from_1d_model(depth_km: float, layers: Sequence[Mapping[str, Any]]) -> tuple[float, float]:
+def _velocity_from_1d_model(depth_km: float, model_cfg: Any) -> tuple[float, float]:
+    """
+    Returns (vp_km_s, vs_km_s) at a given hypocentral depth.
+
+    Supported config formats:
+    1) Layered list (legacy):
+       [{"z_top_km":.., "z_bot_km":.., "vp_km_s":.., "vs_km_s":..}, ...]
+    2) Knot profile (new):
+       {
+         "Depths": [...],   # signed depth knots
+         "Vp": [...],       # velocity knots
+         "Vs": [...],
+         "depth_unit": "m"|"km"   (optional, inferred if absent),
+         "velocity_unit": "m/s"|"km/s" (optional, inferred if absent)
+       }
+    """
     z = float(depth_km)
+
+    # Format-2: knot profile
+    if isinstance(model_cfg, Mapping) and {"Depths", "Vp", "Vs"}.issubset(model_cfg.keys()):
+        depths = [float(v) for v in model_cfg["Depths"]]
+        vp_vals = [float(v) for v in model_cfg["Vp"]]
+        vs_vals = [float(v) for v in model_cfg["Vs"]]
+        if not (len(depths) == len(vp_vals) == len(vs_vals)) or len(depths) == 0:
+            raise ValueError("velocity_model_1d knot profile has invalid lengths for Depths/Vp/Vs.")
+
+        depth_unit = str(model_cfg.get("depth_unit", "")).lower().strip()
+        vel_unit = str(model_cfg.get("velocity_unit", "")).lower().strip()
+        if not depth_unit:
+            depth_unit = "m" if max(abs(d) for d in depths) > 1000.0 else "km"
+        if not vel_unit:
+            vel_unit = "m/s" if max(max(vp_vals), max(vs_vals)) > 100.0 else "km/s"
+
+        if depth_unit in {"m", "meter", "meters"}:
+            depth_nodes_km = [abs(d) / 1000.0 for d in depths]
+        elif depth_unit in {"km", "kilometer", "kilometers"}:
+            depth_nodes_km = [abs(d) for d in depths]
+        else:
+            raise ValueError(f"Unsupported depth_unit in velocity_model_1d: {depth_unit}")
+
+        if vel_unit in {"m/s", "mps"}:
+            vp_nodes = [v / 1000.0 for v in vp_vals]
+            vs_nodes = [v / 1000.0 for v in vs_vals]
+        elif vel_unit in {"km/s", "kmps"}:
+            vp_nodes = list(vp_vals)
+            vs_nodes = list(vs_vals)
+        else:
+            raise ValueError(f"Unsupported velocity_unit in velocity_model_1d: {vel_unit}")
+
+        # Sort by increasing depth and interpolate with endpoint clamping.
+        order = np.argsort(np.asarray(depth_nodes_km, dtype=np.float64))
+        d = np.asarray([depth_nodes_km[i] for i in order], dtype=np.float64)
+        vp = np.asarray([vp_nodes[i] for i in order], dtype=np.float64)
+        vs = np.asarray([vs_nodes[i] for i in order], dtype=np.float64)
+        z_clamped = float(np.clip(z, d[0], d[-1]))
+        vp_km_s = float(np.interp(z_clamped, d, vp))
+        vs_km_s = float(np.interp(z_clamped, d, vs))
+        return vp_km_s, vs_km_s
+
+    # Format-1: layered profile
+    layers = list(model_cfg) if model_cfg is not None else []
     if not layers:
         return 6.0, 3.5
     for layer in layers:
@@ -185,7 +276,6 @@ def _velocity_from_1d_model(depth_km: float, layers: Sequence[Mapping[str, Any]]
         z_bot = float(layer["z_bot_km"])
         if z >= z_top and z < z_bot:
             return float(layer["vp_km_s"]), float(layer["vs_km_s"])
-    # Clamp to nearest boundary.
     if z < float(layers[0]["z_top_km"]):
         return float(layers[0]["vp_km_s"]), float(layers[0]["vs_km_s"])
     last = layers[-1]
@@ -205,8 +295,8 @@ def _read_starttime_seconds_from_origin(file_path: str | Path, event_origin_iso:
     _require_obspy()
     stream = read(str(file_path), headonly=True)
     z_trace = _preferred_z_trace_from_stream(stream)
-    start_dt = z_trace.stats.starttime.datetime
-    origin_dt = datetime.fromisoformat(event_origin_iso)
+    start_dt = _to_utc_naive(z_trace.stats.starttime.datetime)
+    origin_dt = _to_utc_naive(datetime.fromisoformat(event_origin_iso))
     return float((start_dt - origin_dt).total_seconds())
 
 
@@ -275,7 +365,7 @@ def _event_origin_dt(event_row: Mapping[str, Any]) -> Optional[datetime]:
     if iso is None:
         return None
     try:
-        return datetime.fromisoformat(str(iso))
+        return _to_utc_naive(datetime.fromisoformat(str(iso)))
     except Exception:
         return None
 
@@ -284,17 +374,13 @@ def _sample_record_from_file(
     file_path: str | Path,
     event_row: Mapping[str, Any],
     phase_row: Mapping[str, Any],
-    velocity_layers: Sequence[Mapping[str, Any]],
-) -> Optional[Dict[str, Any]]:
+    velocity_model: Any,
+    start_offset_s: float,
+) -> Dict[str, Any]:
     event_id, station = _extract_event_station(file_path)
     origin_iso = event_row.get("origin_time")
     if origin_iso is None:
-        return None
-
-    try:
-        start_offset_s = _read_starttime_seconds_from_origin(file_path, str(origin_iso))
-    except Exception:
-        return None
+        raise ValueError("missing_origin_time")
 
     magnitude = float(event_row["magnitude"])
     depth_km = float(event_row["depth_km"])
@@ -302,7 +388,7 @@ def _sample_record_from_file(
     azimuth_deg = float(phase_row["azimuth_deg"])
 
     repi_km = dist_deg * EARTH_KM_PER_DEG
-    vp, vs = _velocity_from_1d_model(depth_km=depth_km, layers=velocity_layers)
+    vp, vs = _velocity_from_1d_model(depth_km=depth_km, model_cfg=velocity_model)
     rhyp_km = math.sqrt(max(repi_km, 0.0) ** 2 + max(depth_km, 0.0) ** 2)
 
     tP_origin_s = rhyp_km / max(vp, 1e-6)
@@ -336,21 +422,46 @@ def _sample_record_from_file(
 def build_or_load_manifest(cfg: Mapping[str, Any], force_rebuild: bool = False) -> List[Dict[str, Any]]:
     manifest_path = Path(cfg["artifacts"]["manifest_file"])
     meta_path = manifest_path.with_suffix(manifest_path.suffix + ".meta.json")
+    drop_report_path = manifest_path.with_suffix(manifest_path.suffix + ".drop_report.json")
     cfg_max_manifest = cfg["data"].get("max_manifest_files")
+    velocity_model_cfg = cfg["conditions"]["velocity_model_1d"]
+    velocity_model_sha = _object_sha256(velocity_model_cfg)
+    excluded_pairs_cfg = cfg["data"].get("manifest_exclude_event_station_pairs", [])
+    excluded_pairs = {str(x) for x in excluded_pairs_cfg}
+    excluded_pairs_sha = _object_sha256(sorted(excluded_pairs))
+    fail_on_manifest_drop = bool(cfg["data"].get("fail_on_manifest_drop", False))
+    max_manifest_drop_rate = float(cfg["data"].get("max_manifest_drop_rate", 1.0))
+    max_drop_examples_per_reason = int(cfg["data"].get("max_drop_examples_per_reason", 20))
     if manifest_path.exists() and not force_rebuild:
         if meta_path.exists():
             meta = load_json(meta_path)
             same_limit = meta.get("max_manifest_files") == cfg_max_manifest
             same_waveform_dir = str(meta.get("waveform_dir", "")) == str(cfg["data"]["waveform_dir"])
-            if same_limit and same_waveform_dir:
-                return load_jsonl(manifest_path)
-        else:
-            # Backward-compat: if meta missing, trust existing manifest.
-            return load_jsonl(manifest_path)
+            same_event_catalog = str(meta.get("event_catalog", "")) == str(cfg["data"]["event_catalog"])
+            same_phase_pick_dir = str(meta.get("phase_pick_dir", "")) == str(cfg["data"]["phase_pick_dir"])
+            same_station_list = str(meta.get("station_list_file", "")) == str(cfg["data"]["station_list_file"])
+            same_velocity_model = str(meta.get("velocity_model_sha256", "")) == velocity_model_sha
+            same_exclusions = str(meta.get("excluded_pairs_sha256", "")) == excluded_pairs_sha
+            same_fail_policy = bool(meta.get("fail_on_manifest_drop", False)) == fail_on_manifest_drop
+            same_max_drop_rate = float(meta.get("max_manifest_drop_rate", -1.0)) == max_manifest_drop_rate
+            if (
+                same_limit
+                and same_waveform_dir
+                and same_event_catalog
+                and same_phase_pick_dir
+                and same_station_list
+                and same_velocity_model
+                and same_exclusions
+                and same_fail_policy
+                and same_max_drop_rate
+            ):
+                current_hash = _file_sha256(manifest_path)
+                if str(meta.get("manifest_sha256", "")) == current_hash:
+                    return load_jsonl(manifest_path)
 
     waveform_dir = Path(cfg["data"]["waveform_dir"])
     event_catalog = load_event_catalog(cfg["data"]["event_catalog"])
-    velocity_layers = cfg["conditions"]["velocity_model_1d"]
+    velocity_model = velocity_model_cfg
 
     station_list = load_json(cfg["data"]["station_list_file"])
     station_to_idx = {sta: idx for idx, sta in enumerate(station_list)}
@@ -363,30 +474,139 @@ def build_or_load_manifest(cfg: Mapping[str, Any], force_rebuild: bool = False) 
     phase_map = _parse_phase_picks_targeted(cfg["data"]["phase_pick_dir"], set(pairs.keys()))
 
     rows: List[Dict[str, Any]] = []
+    drop_counts: Counter[str] = Counter()
+    drop_examples: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
+    def add_drop(reason: str, fp: str | Path, event_id: str, station: str, detail: str = "") -> None:
+        drop_counts[reason] += 1
+        ex = drop_examples[reason]
+        if len(ex) < max_drop_examples_per_reason:
+            ex.append(
+                {
+                    "file_path": str(fp),
+                    "event_id": str(event_id),
+                    "station_code": str(station),
+                    "detail": str(detail)[:240],
+                }
+            )
+
+    def has_nonfinite(sample: Mapping[str, Any]) -> bool:
+        keys = ("magnitude", "depth_km", "repi_km", "azimuth_sin", "azimuth_cos", "tP_ref_s", "tS_ref_s", "dtPS_ref_s")
+        for k in keys:
+            v = float(sample[k])
+            if not math.isfinite(v):
+                return True
+        return False
+
     for fp in files:
         event_id, station = _extract_event_station(fp)
+        pair_key = f"{event_id}_{station}"
+        if pair_key in excluded_pairs:
+            add_drop("excluded_event_station", fp, event_id, station, detail="excluded by config")
+            continue
+
         event_row = event_catalog.get(event_id)
         phase_row = phase_map.get((event_id, station))
-        if event_row is None or phase_row is None:
+        if event_row is None:
+            add_drop("missing_event_catalog", fp, event_id, station)
             continue
-        sample = _sample_record_from_file(
-            file_path=fp,
-            event_row=event_row,
-            phase_row=phase_row,
-            velocity_layers=velocity_layers,
-        )
-        if sample is None:
+        if phase_row is None:
+            add_drop("missing_phase_pick", fp, event_id, station)
             continue
-        sample["station_idx"] = int(station_to_idx.get(station, 0))
+        if event_row.get("origin_time") is None:
+            add_drop("missing_origin_time", fp, event_id, station)
+            continue
+        if station not in station_to_idx:
+            add_drop("unknown_station", fp, event_id, station)
+            continue
+
+        try:
+            start_offset_s = _read_starttime_seconds_from_origin(fp, str(event_row["origin_time"]))
+        except Exception as exc:
+            add_drop("starttime_read_error", fp, event_id, station, detail=str(exc))
+            continue
+
+        try:
+            sample = _sample_record_from_file(
+                file_path=fp,
+                event_row=event_row,
+                phase_row=phase_row,
+                velocity_model=velocity_model,
+                start_offset_s=float(start_offset_s),
+            )
+        except Exception as exc:
+            msg = str(exc)
+            reason = "velocity_model_error" if "velocity_model_1d" in msg else "sample_build_failed"
+            add_drop(reason, fp, event_id, station, detail=msg)
+            continue
+
+        if has_nonfinite(sample):
+            add_drop("nonfinite_feature", fp, event_id, station)
+            continue
+
+        sample["station_idx"] = int(station_to_idx[station])
         rows.append(sample)
 
+    num_scanned = len(files)
+    num_kept = len(rows)
+    num_dropped_total = num_scanned - num_kept
+    num_excluded = int(drop_counts.get("excluded_event_station", 0))
+    num_dropped_nonexcluded = max(0, num_dropped_total - num_excluded)
+    drop_rate_total = (num_dropped_total / num_scanned) if num_scanned > 0 else 0.0
+    drop_rate_nonexcluded = (num_dropped_nonexcluded / num_scanned) if num_scanned > 0 else 0.0
+
+    drop_payload = {
+        "num_files_scanned": num_scanned,
+        "num_rows_kept": num_kept,
+        "num_rows_dropped_total": num_dropped_total,
+        "num_rows_dropped_nonexcluded": num_dropped_nonexcluded,
+        "drop_rate_total": float(drop_rate_total),
+        "drop_rate_nonexcluded": float(drop_rate_nonexcluded),
+        "drop_counts_by_reason": dict(drop_counts),
+        "drop_examples_by_reason": dict(drop_examples),
+        "excluded_pairs_count": len(excluded_pairs),
+        "excluded_row_count": num_excluded,
+        "excluded_pairs_sha256": excluded_pairs_sha,
+    }
+    save_json(drop_report_path, drop_payload)
+
+    if fail_on_manifest_drop and num_dropped_nonexcluded > 0:
+        raise ValueError(
+            "Manifest build failed: dropped rows detected while fail_on_manifest_drop=true. "
+            f"dropped_nonexcluded={num_dropped_nonexcluded}, drop_rate_nonexcluded={drop_rate_nonexcluded:.6f}, "
+            f"reasons={dict(drop_counts)}; see {drop_report_path}"
+        )
+    if drop_rate_nonexcluded > max_manifest_drop_rate:
+        raise ValueError(
+            "Manifest build failed: drop rate exceeded max_manifest_drop_rate. "
+            f"drop_rate_nonexcluded={drop_rate_nonexcluded:.6f} > max={max_manifest_drop_rate:.6f}; "
+            f"see {drop_report_path}"
+        )
+
     save_jsonl(manifest_path, rows)
+    manifest_sha = _file_sha256(manifest_path)
     save_json(
         meta_path,
         {
             "waveform_dir": str(cfg["data"]["waveform_dir"]),
+            "event_catalog": str(cfg["data"]["event_catalog"]),
+            "phase_pick_dir": str(cfg["data"]["phase_pick_dir"]),
+            "station_list_file": str(cfg["data"]["station_list_file"]),
             "max_manifest_files": cfg_max_manifest,
             "num_rows": len(rows),
+            "velocity_model_sha256": velocity_model_sha,
+            "excluded_pairs_sha256": excluded_pairs_sha,
+            "excluded_pairs_count": len(excluded_pairs),
+            "fail_on_manifest_drop": fail_on_manifest_drop,
+            "max_manifest_drop_rate": max_manifest_drop_rate,
+            "num_files_scanned": num_scanned,
+            "num_rows_dropped_total": num_dropped_total,
+            "num_rows_dropped_nonexcluded": num_dropped_nonexcluded,
+            "excluded_row_count": num_excluded,
+            "drop_rate_total": float(drop_rate_total),
+            "drop_rate_nonexcluded": float(drop_rate_nonexcluded),
+            "drop_counts_by_reason": dict(drop_counts),
+            "manifest_sha256": manifest_sha,
         },
     )
     return rows
@@ -399,37 +619,86 @@ def _split_events(
     val_ratio: float,
     test_ratio: float,
     ood_event_ratio: float,
+    ood_policy: str,
+    min_events_per_split: int,
+    max_missing_origin_events: int,
+    max_unassigned_samples: int,
 ) -> Dict[str, Any]:
     if abs(train_ratio + val_ratio + test_ratio - 1.0) > 1e-8:
         raise ValueError("train_ratio + val_ratio + test_ratio must be 1.0")
+    if ood_policy != "latest_by_origin_time":
+        raise ValueError(f"Unsupported ood_policy: {ood_policy}")
+    if ood_event_ratio < 0.0 or ood_event_ratio > 1.0:
+        raise ValueError("ood_event_ratio must be in [0, 1]")
 
-    events: Dict[str, datetime] = {}
+    events_with_origin: Dict[str, datetime] = {}
+    all_events = sorted({str(row["event_id"]) for row in manifest_rows})
     for row in manifest_rows:
         evt = str(row["event_id"])
-        if evt in events:
+        if evt in events_with_origin:
             continue
         origin = _event_origin_dt(row)
         if origin is not None:
-            events[evt] = origin
+            events_with_origin[evt] = origin
 
-    sorted_events = sorted(events.items(), key=lambda kv: kv[1])
+    missing_origin_events = sorted(set(all_events) - set(events_with_origin.keys()))
+    if len(missing_origin_events) > int(max_missing_origin_events):
+        raise ValueError(
+            "Too many events without origin time for event-wise split: "
+            f"{len(missing_origin_events)} > {int(max_missing_origin_events)}"
+        )
+
+    sorted_events = sorted(events_with_origin.items(), key=lambda kv: kv[1])
     event_ids_sorted = [eid for eid, _ in sorted_events]
     n_total = len(event_ids_sorted)
-    n_ood = max(1, int(round(n_total * float(ood_event_ratio))))
-    ood_events = set(event_ids_sorted[-n_ood:])
-    in_domain_events = event_ids_sorted[:-n_ood]
+    if n_total <= 0:
+        raise ValueError("No events with valid origin_time found for split.")
+
+    if float(ood_event_ratio) == 0.0:
+        n_ood = 0
+    else:
+        n_ood = max(1, int(round(n_total * float(ood_event_ratio))))
+        if n_total > 1:
+            n_ood = min(n_ood, n_total - 1)
+    if n_ood == 0:
+        ood_events = set()
+        in_domain_events = list(event_ids_sorted)
+    else:
+        ood_events = set(event_ids_sorted[-n_ood:])
+        in_domain_events = event_ids_sorted[:-n_ood]
+    n_in = len(in_domain_events)
+
+    min_events_per_split = int(min_events_per_split)
+    if n_in < 3 * min_events_per_split:
+        raise ValueError(
+            "Not enough in-domain events after OOD split to satisfy non-empty train/val/test: "
+            f"n_in={n_in}, required>={3 * min_events_per_split}"
+        )
 
     rng = np.random.default_rng(int(seed))
     shuffled = list(in_domain_events)
     rng.shuffle(shuffled)
 
-    n_in = len(shuffled)
     n_train = int(n_in * train_ratio)
     n_val = int(n_in * val_ratio)
+    n_test = n_in - n_train - n_val
+
+    counts = [n_train, n_val, n_test]
+    mins = [min_events_per_split, min_events_per_split, min_events_per_split]
+    for i in range(3):
+        while counts[i] < mins[i]:
+            donor = max(range(3), key=lambda j: counts[j] - mins[j])
+            if counts[donor] <= mins[donor]:
+                raise ValueError(
+                    "Could not satisfy min_events_per_split for train/val/test with current ratios and OOD split."
+                )
+            counts[donor] -= 1
+            counts[i] += 1
+    n_train, n_val, n_test = counts
 
     train_events = set(shuffled[:n_train])
     val_events = set(shuffled[n_train : n_train + n_val])
-    test_events = set(shuffled[n_train + n_val :])
+    test_events = set(shuffled[n_train + n_val : n_train + n_val + n_test])
 
     split = {
         "train": {"indices": [], "events": sorted(train_events)},
@@ -438,6 +707,7 @@ def _split_events(
         "ood": {"indices": [], "events": sorted(ood_events)},
     }
 
+    unassigned_indices: List[int] = []
     for i, row in enumerate(manifest_rows):
         evt = str(row["event_id"])
         if evt in train_events:
@@ -448,22 +718,61 @@ def _split_events(
             split["test"]["indices"].append(i)
         elif evt in ood_events:
             split["ood"]["indices"].append(i)
+        else:
+            unassigned_indices.append(i)
+
+    if len(unassigned_indices) > int(max_unassigned_samples):
+        raise ValueError(
+            "Too many unassigned samples after split (likely due missing origin_time events): "
+            f"{len(unassigned_indices)} > {int(max_unassigned_samples)}"
+        )
 
     for key in split:
         split[key]["num_samples"] = len(split[key]["indices"])
         split[key]["num_events"] = len(split[key]["events"])
+    split["_diagnostics"] = {
+        "all_event_count": len(all_events),
+        "events_with_origin_count": len(events_with_origin),
+        "missing_origin_event_count": len(missing_origin_events),
+        "missing_origin_events_preview": missing_origin_events[:20],
+        "unassigned_sample_count": len(unassigned_indices),
+        "unassigned_sample_indices_preview": unassigned_indices[:20],
+        "ood_policy": ood_policy,
+        "ood_event_ratio": float(ood_event_ratio),
+        "min_events_per_split": int(min_events_per_split),
+    }
     return split
 
 
 def build_or_load_frozen_splits(
     cfg: Mapping[str, Any],
     manifest_rows: Sequence[Mapping[str, Any]],
+    manifest_sha256: str,
     force_rebuild: bool = False,
 ) -> Dict[str, Any]:
     split_file = Path(cfg["artifacts"]["frozen_split_file"])
+    split_cfg = cfg["split"]
+    ood_policy = str(split_cfg.get("ood_policy", "latest_by_origin_time"))
+    min_events_per_split = int(split_cfg.get("min_events_per_split", 1))
+    max_missing_origin_events = int(split_cfg.get("max_missing_origin_events", 0))
+    max_unassigned_samples = int(split_cfg.get("max_unassigned_samples", 0))
+
     if split_file.exists() and not force_rebuild:
         payload = load_json(split_file)
-        if int(payload.get("manifest_num_rows", -1)) == len(manifest_rows):
+        meta = payload.get("_meta", {})
+        if (
+            int(meta.get("manifest_num_rows", -1)) == len(manifest_rows)
+            and str(meta.get("manifest_sha256", "")) == str(manifest_sha256)
+            and int(meta.get("seed", -1)) == int(cfg["experiment"]["seed"])
+            and float(meta.get("train_ratio", -1.0)) == float(split_cfg["train_ratio"])
+            and float(meta.get("val_ratio", -1.0)) == float(split_cfg["val_ratio"])
+            and float(meta.get("test_ratio", -1.0)) == float(split_cfg["test_ratio"])
+            and float(meta.get("ood_event_ratio", -1.0)) == float(split_cfg["ood_event_ratio"])
+            and str(meta.get("ood_policy", "")) == ood_policy
+            and int(meta.get("min_events_per_split", -1)) == min_events_per_split
+            and int(meta.get("max_missing_origin_events", -1)) == max_missing_origin_events
+            and int(meta.get("max_unassigned_samples", -1)) == max_unassigned_samples
+        ):
             return payload
 
     split = _split_events(
@@ -473,8 +782,24 @@ def build_or_load_frozen_splits(
         val_ratio=float(cfg["split"]["val_ratio"]),
         test_ratio=float(cfg["split"]["test_ratio"]),
         ood_event_ratio=float(cfg["split"]["ood_event_ratio"]),
+        ood_policy=ood_policy,
+        min_events_per_split=min_events_per_split,
+        max_missing_origin_events=max_missing_origin_events,
+        max_unassigned_samples=max_unassigned_samples,
     )
-    split["manifest_num_rows"] = len(manifest_rows)
+    split["_meta"] = {
+        "manifest_num_rows": len(manifest_rows),
+        "manifest_sha256": manifest_sha256,
+        "seed": int(cfg["experiment"]["seed"]),
+        "train_ratio": float(split_cfg["train_ratio"]),
+        "val_ratio": float(split_cfg["val_ratio"]),
+        "test_ratio": float(split_cfg["test_ratio"]),
+        "ood_event_ratio": float(split_cfg["ood_event_ratio"]),
+        "ood_policy": ood_policy,
+        "min_events_per_split": min_events_per_split,
+        "max_missing_origin_events": max_missing_origin_events,
+        "max_unassigned_samples": max_unassigned_samples,
+    }
     save_json(split_file, split)
     return split
 
@@ -509,16 +834,36 @@ def build_or_load_normalization_stats(
     cfg: Mapping[str, Any],
     manifest_rows: Sequence[Mapping[str, Any]],
     split_payload: Mapping[str, Any],
+    manifest_sha256: str,
     force_rebuild: bool = False,
 ) -> Dict[str, Any]:
     stats_file = Path(cfg["artifacts"]["normalization_stats_file"])
+    stft_cfg = cfg["stft"]
+    stft_signature = {
+        "n_fft": int(stft_cfg["n_fft"]),
+        "win_length": int(stft_cfg["win_length"]),
+        "hop_length": int(stft_cfg["hop_length"]),
+        "drop_nyquist": bool(stft_cfg["drop_nyquist"]),
+        "target_freq_bins": int(stft_cfg["target_freq_bins"]),
+        "target_time_frames": int(stft_cfg["target_time_frames"]),
+    }
+    feature_order_cfg = list(cfg["conditions"]["numeric_feature_order"])
+    max_samples_cfg = cfg["normalization"].get("max_samples_for_stft_rms")
+
     if stats_file.exists() and not force_rebuild:
         payload = load_json(stats_file)
-        if int(payload.get("manifest_num_rows", -1)) == len(manifest_rows):
+        meta = payload.get("_meta", {})
+        if (
+            int(meta.get("manifest_num_rows", -1)) == len(manifest_rows)
+            and str(meta.get("manifest_sha256", "")) == str(manifest_sha256)
+            and payload.get("feature_order", []) == feature_order_cfg
+            and meta.get("stft_signature", {}) == stft_signature
+            and meta.get("max_samples_for_stft_rms", None) == max_samples_cfg
+        ):
             return payload
 
     train_indices = list(split_payload["train"]["indices"])
-    feat_order = list(cfg["conditions"]["numeric_feature_order"])
+    feat_order = feature_order_cfg
     feats = np.asarray(
         [[float(manifest_rows[i][k]) for k in feat_order] for i in train_indices],
         dtype=np.float64,
@@ -547,7 +892,12 @@ def build_or_load_normalization_stats(
         "stft_global_rms": float(stft_rms),
         "num_train_samples": len(train_indices),
         "num_stft_rms_samples": len(train_indices) if max_samples is None else min(len(train_indices), int(max_samples)),
-        "manifest_num_rows": len(manifest_rows),
+        "_meta": {
+            "manifest_num_rows": len(manifest_rows),
+            "manifest_sha256": manifest_sha256,
+            "stft_signature": stft_signature,
+            "max_samples_for_stft_rms": max_samples_cfg,
+        },
     }
     save_json(stats_file, payload)
     return payload
@@ -561,8 +911,20 @@ def prepare_exp001_artifacts(
 ) -> tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
     ensure_dir(Path(cfg["artifacts"]["protocol_dir"]))
     manifest = build_or_load_manifest(cfg, force_rebuild=force_rebuild_manifest)
-    split = build_or_load_frozen_splits(cfg, manifest, force_rebuild=force_rebuild_split)
-    stats = build_or_load_normalization_stats(cfg, manifest, split, force_rebuild=force_rebuild_stats)
+    manifest_sha = _file_sha256(Path(cfg["artifacts"]["manifest_file"]))
+    split = build_or_load_frozen_splits(
+        cfg,
+        manifest,
+        manifest_sha256=manifest_sha,
+        force_rebuild=force_rebuild_split,
+    )
+    stats = build_or_load_normalization_stats(
+        cfg,
+        manifest,
+        split,
+        manifest_sha256=manifest_sha,
+        force_rebuild=force_rebuild_stats,
+    )
     return manifest, split, stats
 
 

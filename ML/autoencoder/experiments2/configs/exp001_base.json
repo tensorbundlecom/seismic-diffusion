@@ -10,6 +10,13 @@
     "event_catalog": "data/external_dataset/extracted/data/events/20140101_20251101_0.0_9.0_9_339.txt",
     "phase_pick_dir": "data/external_dataset/extracted/data/phase_picks",
     "station_list_file": "data/station_list_external_full.json",
+    "manifest_exclude_event_station_pairs": [
+      "20151130230709_BALB",
+      "20151130230709_TVSB"
+    ],
+    "fail_on_manifest_drop": true,
+    "max_manifest_drop_rate": 0.0,
+    "max_drop_examples_per_reason": 20,
     "sampling_rate_hz": 100.0,
     "component": "Z"
   },
@@ -18,7 +25,10 @@
     "val_ratio": 0.1,
     "test_ratio": 0.1,
     "ood_event_ratio": 0.1,
-    "ood_policy": "latest_by_origin_time"
+    "ood_policy": "latest_by_origin_time",
+    "min_events_per_split": 1,
+    "max_missing_origin_events": 0,
+    "max_unassigned_samples": 0
   },
   "stft": {
     "n_fft": 256,
@@ -41,26 +51,64 @@
       "tS_ref_s",
       "dtPS_ref_s"
     ],
-    "velocity_model_1d": [
-      {
-        "z_top_km": 0.0,
-        "z_bot_km": 5.0,
-        "vp_km_s": 5.5,
-        "vs_km_s": 3.2
-      },
-      {
-        "z_top_km": 5.0,
-        "z_bot_km": 15.0,
-        "vp_km_s": 6.0,
-        "vs_km_s": 3.5
-      },
-      {
-        "z_top_km": 15.0,
-        "z_bot_km": 35.0,
-        "vp_km_s": 6.5,
-        "vs_km_s": 3.7
-      }
-    ]
+    "velocity_model_1d": {
+      "depth_unit": "m",
+      "velocity_unit": "m/s",
+      "Depths": [
+        -32000,
+        -25000,
+        -22000,
+        -20000,
+        -15000,
+        -14000,
+        -12000,
+        -10000,
+        -8000,
+        -6000,
+        -5000,
+        -4000,
+        -3000,
+        -2000,
+        -1000,
+        0
+      ],
+      "Vp": [
+        8000,
+        6700,
+        6500,
+        6400,
+        6300,
+        6250,
+        6200,
+        6150,
+        6100,
+        6050,
+        5950,
+        5900,
+        5800,
+        5700,
+        5600,
+        3000
+      ],
+      "Vs": [
+        4650,
+        3850,
+        3780,
+        3660,
+        3630,
+        3610,
+        3590,
+        3560,
+        3480,
+        3440,
+        3420,
+        3410,
+        3260,
+        3210,
+        3150,
+        1900
+      ]
+    }
   },
   "normalization": {
     "eps": 1e-8,
@@ -150,15 +198,17 @@
     }
   },
   "imbalance_guardrails": {
+    "enabled": true,
+    "reference_cond_eval_json": null,
     "tail_bin_min_improvement_pct": 5.0,
     "all_bin_max_degradation_pct": 8.0,
     "mid_bin_max_degradation_pct": 10.0
   },
   "artifacts": {
     "protocol_dir": "ML/autoencoder/experiments2/protocol",
-    "frozen_split_file": "ML/autoencoder/experiments2/protocol/frozen_event_splits_exp001.json",
-    "manifest_file": "ML/autoencoder/experiments2/protocol/manifest_exp001.jsonl",
-    "normalization_stats_file": "ML/autoencoder/experiments2/protocol/normalization_stats_exp001.json",
+    "frozen_split_file": "ML/autoencoder/experiments2/protocol/frozen/base/frozen_event_splits_exp001.json",
+    "manifest_file": "ML/autoencoder/experiments2/protocol/frozen/base/manifest_exp001.jsonl",
+    "normalization_stats_file": "ML/autoencoder/experiments2/protocol/frozen/base/normalization_stats_exp001.json",
     "run_root": "ML/autoencoder/experiments2/runs/exp001"
   }
 }

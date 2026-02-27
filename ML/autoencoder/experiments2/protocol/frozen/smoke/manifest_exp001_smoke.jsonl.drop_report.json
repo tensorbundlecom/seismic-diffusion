@@ -1,0 +1,13 @@
+{
+  "num_files_scanned": 256,
+  "num_rows_kept": 256,
+  "num_rows_dropped_total": 0,
+  "num_rows_dropped_nonexcluded": 0,
+  "drop_rate_total": 0.0,
+  "drop_rate_nonexcluded": 0.0,
+  "drop_counts_by_reason": {},
+  "drop_examples_by_reason": {},
+  "excluded_pairs_count": 2,
+  "excluded_row_count": 0,
+  "excluded_pairs_sha256": "84613057690d376cac6b20b3b39802af13c6c13c8f0dceb2ddf3fede5efddc96"
+}

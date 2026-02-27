@@ -17,6 +17,7 @@ LOWER_BETTER_METRICS = {
     "mr_lsd",
     "abs_xcorr_lag_s",
     "band_energy_ratio_error",
+    "mid_band_error",
     "onset_mae_p_s",
     "onset_mae_s_s",
     "onset_mae_dtps_s",
@@ -138,7 +139,7 @@ def _band_ratio_errors(
     pred: np.ndarray,
     target: np.ndarray,
     cfg: Mapping[str, Any],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     stft_cfg = cfg["stft"]
     eval_cfg = cfg["evaluation"]
     fs = float(cfg["data"]["sampling_rate_hz"])
@@ -154,9 +155,17 @@ def _band_ratio_errors(
         freqs = np.concatenate([freqs, pad], axis=0)
 
     low_lo, low_hi = eval_cfg["metric_bands_hz"]["low"]
+    mid_lo, mid_hi = eval_cfg["metric_bands_hz"]["mid"]
     high_lo, high_hi = eval_cfg["metric_bands_hz"]["high"]
     low_mask = (freqs >= float(low_lo)) & (freqs < float(low_hi))
+    mid_mask = (freqs >= float(mid_lo)) & (freqs < float(mid_hi))
     high_mask = (freqs >= float(high_lo)) & (freqs < float(high_hi))
+    if not np.any(low_mask):
+        raise ValueError("metric_bands_hz.low produced an empty frequency mask.")
+    if not np.any(mid_mask):
+        raise ValueError("metric_bands_hz.mid produced an empty frequency mask.")
+    if not np.any(high_mask):
+        raise ValueError("metric_bands_hz.high produced an empty frequency mask.")
 
     pred_mag2 = np.square(pred[:, 0]) + np.square(pred[:, 1])
     true_mag2 = np.square(target[:, 0]) + np.square(target[:, 1])
@@ -168,13 +177,16 @@ def _band_ratio_errors(
 
     pred_low = _band_share(pred_mag2, low_mask)
     true_low = _band_share(true_mag2, low_mask)
+    pred_mid = _band_share(pred_mag2, mid_mask)
+    true_mid = _band_share(true_mag2, mid_mask)
     pred_high = _band_share(pred_mag2, high_mask)
     true_high = _band_share(true_mag2, high_mask)
 
     low_err = np.abs(pred_low - true_low)
+    mid_err = np.abs(pred_mid - true_mid)
     high_err = np.abs(pred_high - true_high)
     ratio_err = 0.5 * (low_err + high_err)
-    return ratio_err, low_err, high_err
+    return ratio_err, low_err, mid_err, high_err
 
 
 @dataclass
@@ -267,9 +279,24 @@ def _batch_metrics(
     true_np = target.detach().cpu().numpy()
     cond_raw_np = cond_raw.detach().cpu().numpy()
 
-    # 0:magnitude, 5:tP_ref_s, 6:tS_ref_s
-    tP_ref = cond_raw_np[:, 5]
-    tS_ref = cond_raw_np[:, 6]
+    feat_order = list(cfg["conditions"]["numeric_feature_order"])
+    try:
+        idx_mag = int(feat_order.index("magnitude"))
+        idx_tp = int(feat_order.index("tP_ref_s"))
+        idx_ts = int(feat_order.index("tS_ref_s"))
+    except ValueError as exc:
+        raise ValueError(
+            "numeric_feature_order must include magnitude, tP_ref_s, and tS_ref_s for evaluation metrics."
+        ) from exc
+    max_idx = max(idx_mag, idx_tp, idx_ts)
+    if cond_raw_np.shape[1] <= max_idx:
+        raise ValueError(
+            f"cond_raw feature width={cond_raw_np.shape[1]} is incompatible with numeric_feature_order "
+            f"(requires index up to {max_idx})."
+        )
+
+    tP_ref = cond_raw_np[:, idx_tp]
+    tS_ref = cond_raw_np[:, idx_ts]
 
     out: Dict[str, np.ndarray] = {}
     dr = pred_np[:, 0] - true_np[:, 0]
@@ -291,9 +318,10 @@ def _batch_metrics(
     env_corr = np.asarray([_safe_corr(env_true[i], env_pred[i]) for i in range(env_true.shape[0])], dtype=np.float64)
     out["envelope_corr"] = env_corr
 
-    ratio_err, low_err, high_err = _band_ratio_errors(pred_np, true_np, cfg=cfg)
+    ratio_err, low_err, mid_err, high_err = _band_ratio_errors(pred_np, true_np, cfg=cfg)
     out["band_energy_ratio_error"] = ratio_err
     out["low_band_error"] = low_err
+    out["mid_band_error"] = mid_err
     out["high_band_error"] = high_err
 
     pick_cfg = cfg["evaluation"]["onset_picker"]
@@ -348,7 +376,7 @@ def _batch_metrics(
     out["failure_s"] = failure_s.astype(np.float64)
     out["evaluable"] = ((~failure_p) & (~failure_s)).astype(np.float64)
 
-    mags = cond_raw_np[:, 0]
+    mags = cond_raw_np[:, idx_mag]
     out["mag"] = mags
     return out
 
@@ -369,6 +397,7 @@ def _add_metric_arrays_to_acc(
         "envelope_corr",
         "band_energy_ratio_error",
         "low_band_error",
+        "mid_band_error",
         "high_band_error",
     ):
         vals = np.asarray(arrays[key])
@@ -455,6 +484,8 @@ def evaluate_condition_only(
         acc = StreamingMetricAccumulator()
         bin_acc = {name: StreamingMetricAccumulator() for name in ("all", "lt3", "m3to5", "ge5")}
         seen_this_k = 0
+        gen = torch.Generator(device=device.type)
+        gen.manual_seed(int(seed_bank[k]))
         with torch.no_grad():
             for batch in dataloader:
                 bsz = int(batch["x"].size(0))
@@ -471,8 +502,6 @@ def evaluate_condition_only(
                 cond_raw = batch["cond_raw"].to(device)
                 station = batch["station_idx"].to(device)
 
-                gen = torch.Generator(device=device.type)
-                gen.manual_seed(int(seed_bank[k]))
                 pred = model.sample_condition_only(cond_numeric=cond, station_idx=station, generator=gen)
                 arrays = _batch_metrics(pred=pred, target=x, cond_raw=cond_raw, cfg=cfg)
                 _add_metric_arrays_to_acc(acc, arrays)

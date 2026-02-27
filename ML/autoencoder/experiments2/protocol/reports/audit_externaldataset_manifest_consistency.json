@@ -1,0 +1,32 @@
+{
+  "total_files": 88921,
+  "ok_files": 88919,
+  "dropped_files": 2,
+  "drop_rate_pct": 0.0022491874810224807,
+  "starttime_checked": 88919,
+  "drop_counts_by_reason": {
+    "missing_phase_pick": 2
+  },
+  "drop_examples_by_reason": {
+    "missing_phase_pick": [
+      {
+        "file": "data/external_dataset/extracted/data/filtered_waveforms/HH/20151130230709_BALB_HH.mseed",
+        "event_id": "20151130230709",
+        "station": "BALB",
+        "extra": ""
+      },
+      {
+        "file": "data/external_dataset/extracted/data/filtered_waveforms/HH/20151130230709_TVSB_HH.mseed",
+        "event_id": "20151130230709",
+        "station": "TVSB",
+        "extra": ""
+      }
+    ]
+  },
+  "inputs": {
+    "waveform_dir": "data/external_dataset/extracted/data/filtered_waveforms/HH",
+    "event_catalog": "data/external_dataset/extracted/data/events/20140101_20251101_0.0_9.0_9_339.txt",
+    "phase_pick_dir": "data/external_dataset/extracted/data/phase_picks",
+    "station_list_file": "data/station_list_external_full.json"
+  }
+}
