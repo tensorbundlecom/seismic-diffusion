@@ -824,7 +824,7 @@ def main() -> None:
             train_stats["beta_t"],
         )
 
-        if early_stop.step(epoch_idx_1based=epoch, value=val_stats["val_total"]):
+        if early_stop.step(epoch_idx_1based=epoch, value=val_fair):
             logger.info("Early stop triggered at epoch %d", epoch)
             break
 
