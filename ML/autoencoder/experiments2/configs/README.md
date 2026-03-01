@@ -7,6 +7,12 @@ Her deney icin tek bir ana config tutulacak.
 - `exp001_smoke.json`: hizli smoke testi icin kucuk konfig.
 - `exp001_stage2_weighted.json`: Stage-2 soft-weighted sampler kosusu icin hazir config.
 
+D013 gate notu:
+
+- `evaluation.condgen_pre_gate`: Stage-1 onset-health esikleri.
+- `evaluation.condgen_quality_gate`: Stage-2 quality esikleri.
+- `exp001_base_full_nogate.json`: debugging icin gate-disi kontrol config'i (secim politikasinda kullanilmaz).
+
 Imbalance guardrail notu:
 
 - Stage-2 (soft weighted sampler) kosularinda `train.use_weighted_sampler=true` ise

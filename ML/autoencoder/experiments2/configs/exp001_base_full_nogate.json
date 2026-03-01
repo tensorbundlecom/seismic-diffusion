@@ -1,7 +1,7 @@
 {
   "experiment": {
     "name": "exp001",
-    "run_tag": "base",
+    "run_tag": "base_full_nogate",
     "seed": 42
   },
   "data": {
@@ -111,7 +111,7 @@
     }
   },
   "normalization": {
-    "eps": 1e-8,
+    "eps": 1e-08,
     "stft_scale_mode": "global_rms_train_only",
     "max_samples_for_stft_rms": null
   },
@@ -148,9 +148,9 @@
     "grad_clip_norm": 1.0,
     "scheduler_factor": 0.5,
     "scheduler_patience": 6,
-    "early_stop_min_epochs": 40,
-    "early_stop_patience": 20,
-    "early_stop_min_delta": 5e-05,
+    "early_stop_min_epochs": 250,
+    "early_stop_patience": 9999,
+    "early_stop_min_delta": 0.0,
     "log_every_steps": 50,
     "eval_every_epochs": 1,
     "cond_eval_subset_size": null,
@@ -185,17 +185,13 @@
       ]
     },
     "condgen_pre_gate": {
-      "min_onset_evaluable_rate": 0.6,
-      "max_onset_failure_p": 0.05,
-      "max_onset_failure_s": 0.35,
-      "max_abs_xcorr_lag_s": 3.0
+      "min_onset_evaluable_rate": 0.0,
+      "max_onset_failure_p": 1.0,
+      "max_onset_failure_s": 1.0,
+      "max_abs_xcorr_lag_s": 1000000000.0
     },
     "condgen_quality_gate": {
-      "enabled": true,
-      "min_xcorr_max": 0.74,
-      "min_envelope_corr": 0.69,
-      "max_mr_lsd": 0.0195,
-      "max_onset_mae_dtps_s": 2.0
+      "enabled": false
     },
     "condgen_calibration_runs": 6,
     "condgen_composite_weights": {

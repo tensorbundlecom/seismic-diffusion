@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 from .dataset import (
     ExternalHHComplexSTFTDataset,
     collate_exp001,
+    make_magnitude_bin_indices,
     make_weighted_sampler_weights,
     prepare_exp001_artifacts,
 )
@@ -61,6 +62,7 @@ class CondgenCompositeCalibrator:
 
     def _passes_gate(self, metrics_mean: Mapping[str, float]) -> tuple[bool, Dict[str, bool]]:
         gate_cfg = self.cfg["evaluation"]["condgen_pre_gate"]
+        quality_cfg = self.cfg["evaluation"].get("condgen_quality_gate", {"enabled": False})
         lag_abs_mean = float(
             metrics_mean.get(
                 "abs_xcorr_lag_s",
@@ -76,6 +78,24 @@ class CondgenCompositeCalibrator:
             <= float(gate_cfg["max_onset_failure_s"]),
             "abs_xcorr_lag_s": lag_abs_mean <= float(gate_cfg["max_abs_xcorr_lag_s"]),
         }
+        if bool(quality_cfg.get("enabled", False)):
+            # Stage-2 quality gate: optional thresholds (only applied if present in config).
+            if "min_xcorr_max" in quality_cfg:
+                checks["quality_xcorr_max"] = float(metrics_mean.get("xcorr_max", -1.0)) >= float(
+                    quality_cfg["min_xcorr_max"]
+                )
+            if "min_envelope_corr" in quality_cfg:
+                checks["quality_envelope_corr"] = float(metrics_mean.get("envelope_corr", -1.0)) >= float(
+                    quality_cfg["min_envelope_corr"]
+                )
+            if "max_mr_lsd" in quality_cfg:
+                checks["quality_mr_lsd"] = float(metrics_mean.get("mr_lsd", 1e9)) <= float(
+                    quality_cfg["max_mr_lsd"]
+                )
+            if "max_onset_mae_dtps_s" in quality_cfg:
+                checks["quality_onset_mae_dtps_s"] = float(metrics_mean.get("onset_mae_dtps_s", 1e9)) <= float(
+                    quality_cfg["max_onset_mae_dtps_s"]
+                )
         return all(checks.values()), checks
 
     def maybe_build_calibration(self, history_means: Sequence[Mapping[str, float]]) -> None:
@@ -242,6 +262,7 @@ def _train_one_epoch(
     m_rec = RunningMean()
     m_c = RunningMean()
     m_m = RunningMean()
+    m_b = RunningMean()
     m_kl_raw = RunningMean()
     m_kl_fb = RunningMean()
 
@@ -266,8 +287,10 @@ def _train_one_epoch(
             logvar=logvar,
             lambda_complex=float(cfg["loss"]["lambda_complex"]),
             lambda_logmag=float(cfg["loss"]["lambda_logmag"]),
+            lambda_band=float(cfg["loss"].get("lambda_band", 0.0)),
             beta_t=beta_t,
             free_bits_per_dim=float(cfg["loss"]["free_bits_per_dim"]),
+            cfg=cfg,
         )
         losses["total"].backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
@@ -278,6 +301,7 @@ def _train_one_epoch(
         m_rec.update(float(losses["recon_total"].item()), bsz)
         m_c.update(float(losses["loss_complex"].item()), bsz)
         m_m.update(float(losses["loss_logmag"].item()), bsz)
+        m_b.update(float(losses["loss_band"].item()), bsz)
         m_kl_raw.update(float(losses["kl_raw"].item()), bsz)
         m_kl_fb.update(float(losses["kl_fb"].item()), bsz)
 
@@ -287,6 +311,7 @@ def _train_one_epoch(
         "train_recon": m_rec.avg,
         "train_complex": m_c.avg,
         "train_logmag": m_m.avg,
+        "train_band": m_b.avg,
         "train_kl_raw": m_kl_raw.avg,
         "train_kl_fb": m_kl_fb.avg,
     }
@@ -304,6 +329,7 @@ def _validate_one_epoch(
     m_rec = RunningMean()
     m_c = RunningMean()
     m_m = RunningMean()
+    m_b = RunningMean()
     m_kl_raw = RunningMean()
     m_kl_fb = RunningMean()
     beta_t = beta_linear_warmup(
@@ -324,14 +350,17 @@ def _validate_one_epoch(
                 logvar=logvar,
                 lambda_complex=float(cfg["loss"]["lambda_complex"]),
                 lambda_logmag=float(cfg["loss"]["lambda_logmag"]),
+                lambda_band=float(cfg["loss"].get("lambda_band", 0.0)),
                 beta_t=beta_t,
                 free_bits_per_dim=float(cfg["loss"]["free_bits_per_dim"]),
+                cfg=cfg,
             )
             bsz = int(x.size(0))
             m_total.update(float(losses["total"].item()), bsz)
             m_rec.update(float(losses["recon_total"].item()), bsz)
             m_c.update(float(losses["loss_complex"].item()), bsz)
             m_m.update(float(losses["loss_logmag"].item()), bsz)
+            m_b.update(float(losses["loss_band"].item()), bsz)
             m_kl_raw.update(float(losses["kl_raw"].item()), bsz)
             m_kl_fb.update(float(losses["kl_fb"].item()), bsz)
     return {
@@ -339,6 +368,7 @@ def _validate_one_epoch(
         "val_recon": m_rec.avg,
         "val_complex": m_c.avg,
         "val_logmag": m_m.avg,
+        "val_band": m_b.avg,
         "val_kl_raw": m_kl_raw.avg,
         "val_kl_fb": m_kl_fb.avg,
     }
@@ -604,6 +634,23 @@ def main() -> None:
         )
 
     loaders = _build_dataloaders(cfg, manifest, split, norm_stats)
+    split_bin_counts: Dict[str, Dict[str, int]] = {}
+    for split_name in ("train", "val", "test", "ood"):
+        ds_rows = loaders[split_name].dataset.rows  # type: ignore[attr-defined]
+        bins = make_magnitude_bin_indices(ds_rows)
+        split_bin_counts[split_name] = {k: len(v) for k, v in bins.items()}
+    logger.info(
+        "Magnitude-bin sample counts train/val/test/ood: %s / %s / %s / %s",
+        split_bin_counts["train"],
+        split_bin_counts["val"],
+        split_bin_counts["test"],
+        split_bin_counts["ood"],
+    )
+    if split_bin_counts["val"].get("ge5", 0) == 0:
+        logger.warning(
+            "VAL split has zero ge5 samples; ge5 is excluded from model selection and used as TEST holdout check only."
+        )
+
     num_stations = len(load_json(cfg["data"]["station_list_file"]))
 
     model = CVAEComplexSTFT(
@@ -634,7 +681,10 @@ def main() -> None:
         min_delta=float(cfg["train"]["early_stop_min_delta"]),
     )
 
-    best_val = float("inf")
+    best_val_legacy = float("inf")
+    best_val_epoch_legacy: Optional[int] = None
+    best_val_fair = float("inf")
+    best_val_epoch_fair: Optional[int] = None
     best_cond_score = float("inf")
     topk_cond_candidates: List[Dict[str, Any]] = []
     cond_history_means: List[Dict[str, float]] = []
@@ -648,26 +698,51 @@ def main() -> None:
     topk = int(cfg["train"]["save_topk_cond_candidates"])
 
     seed_bank_sweep = build_seed_bank(int(cfg["evaluation"]["seed_bank_base"]), int(cfg["evaluation"]["k_samples_sweep"]))
+    seed_bank_final = build_seed_bank(int(cfg["evaluation"]["seed_bank_base"]), int(cfg["evaluation"]["k_samples_final"]))
 
     for epoch in range(1, max_epochs + 1):
         train_stats = _train_one_epoch(model, loaders["train"], optimizer, cfg, device, epoch)
         val_stats = _validate_one_epoch(model, loaders["val"], cfg, device, epoch)
-        scheduler.step(val_stats["val_total"])
+        beta_max = float(cfg["loss"]["beta_max"])
+        val_fair = float(val_stats["val_recon"]) + beta_max * float(val_stats["val_kl_fb"])
+        scheduler.step(val_fair)
 
-        row: Dict[str, Any] = {"epoch": epoch, **train_stats, **val_stats}
+        row: Dict[str, Any] = {"epoch": epoch, **train_stats, **val_stats, "val_fair": val_fair}
 
-        if val_stats["val_total"] < best_val:
-            best_val = val_stats["val_total"]
+        if val_stats["val_total"] < best_val_legacy:
+            best_val_legacy = float(val_stats["val_total"])
+            best_val_epoch_legacy = int(epoch)
             _save_checkpoint(
                 path=run_paths["checkpoints"] / "best_val_loss.pt",
                 model=model,
                 optimizer=optimizer,
                 epoch=epoch,
-                val_loss=best_val,
+                val_loss=best_val_legacy,
                 cfg=cfg,
-                extra={"criterion": "best_val_loss"},
+                extra={"criterion": "best_val_loss_legacy"},
             )
-            logger.info("[E%03d] new best_val_loss=%.6f", epoch, best_val)
+            logger.info("[E%03d] new best_val_loss_legacy=%.6f", epoch, best_val_legacy)
+
+        if val_fair < best_val_fair:
+            best_val_fair = float(val_fair)
+            best_val_epoch_fair = int(epoch)
+            _save_checkpoint(
+                path=run_paths["checkpoints"] / "best_val_fair.pt",
+                model=model,
+                optimizer=optimizer,
+                epoch=epoch,
+                val_loss=best_val_fair,
+                cfg=cfg,
+                extra={
+                    "criterion": "best_val_fair",
+                    "val_total": float(val_stats["val_total"]),
+                    "val_recon": float(val_stats["val_recon"]),
+                    "val_kl_fb": float(val_stats["val_kl_fb"]),
+                    "beta_t": float(train_stats["beta_t"]),
+                    "beta_max": beta_max,
+                },
+            )
+            logger.info("[E%03d] new best_val_fair=%.6f", epoch, best_val_fair)
 
         if epoch % eval_every == 0:
             cond_eval = evaluate_condition_only(
@@ -784,25 +859,63 @@ def main() -> None:
             "Inspect metrics/cond_eval_epoch_*.json and rerank results."
         )
     else:
-        # Fallback: copy best val checkpoint when no valid condgen candidate exists.
-        src_ckpt = run_paths["checkpoints"] / "best_val_loss.pt"
+        # Fallback: copy fair-val checkpoint when no valid condgen candidate exists.
+        src_ckpt = run_paths["checkpoints"] / "best_val_fair.pt"
         dst_ckpt = run_paths["checkpoints"] / "best_condgen_composite.pt"
         shutil.copy2(src_ckpt, dst_ckpt)
         fallback_payload = torch.load(src_ckpt, map_location=device)
         model.load_state_dict(fallback_payload["model_state_dict"])
-        logger.warning("No valid condgen candidate; fallback to best_val_loss.pt")
+        logger.warning("No valid condgen candidate; fallback to best_val_fair.pt")
 
     # Final reconstruction reports on val/test/ood for quick sanity.
     recon_val = evaluate_reconstruction(model, loaders["val"], cfg, device)
     recon_test = evaluate_reconstruction(model, loaders["test"], cfg, device)
     recon_ood = evaluate_reconstruction(model, loaders["ood"], cfg, device)
 
+    # Q1-D policy: ge5 is a test-holdout diagnostic only (not a selection gate).
+    cond_eval_test_final = evaluate_condition_only(
+        model=model,
+        dataloader=loaders["test"],
+        cfg=cfg,
+        device=device,
+        k_samples=int(cfg["evaluation"]["k_samples_final"]),
+        seed_bank=seed_bank_final,
+        max_samples=None,
+    )
+    holdout_tail_test = {
+        "policy": "test_holdout_only_not_used_for_selection",
+        "bin_counts_test": split_bin_counts["test"],
+        "ge5_available": bool(split_bin_counts["test"].get("ge5", 0) > 0),
+        "ge5_metrics": dict(cond_eval_test_final.get("by_bin_mean", {}).get("ge5", {})),
+    }
+    save_json(
+        run_paths["metrics"] / "cond_eval_holdout_test_final.json",
+        {
+            "selection_policy": "ge5 excluded from model selection (Q1-D), test-only holdout check",
+            "split_bin_counts": split_bin_counts,
+            "cond_eval_test_final": cond_eval_test_final,
+        },
+    )
+
     _write_history_csv(run_paths["metrics"] / "train_history.csv", history_rows)
     summary = {
-        "best_val_loss": best_val,
+        "best_val_loss": best_val_legacy,  # backward-compatible key
+        "best_val_loss_legacy": best_val_legacy,
+        "best_val_epoch_legacy": best_val_epoch_legacy,
+        "best_val_fair": best_val_fair,
+        "best_val_epoch_fair": best_val_epoch_fair,
+        "best_val_fair_formula": "val_recon + beta_max * val_kl_fb",
         "best_condgen_score_sweep": None if not np.isfinite(best_cond_score) else best_cond_score,
         "num_epochs_finished": len(history_rows),
         "cond_history_len": len(cond_history_means),
+        "cond_eval_selection": {
+            "split": "val",
+            "subset_size": cond_subset,
+            "full_val_used": cond_subset is None,
+            "val_bin_counts": split_bin_counts["val"],
+            "test_bin_counts": split_bin_counts["test"],
+            "ge5_policy": "test_holdout_only_not_used_for_selection",
+        },
         "imbalance_guardrail": {
             "active": imbalance_reference_by_bin is not None,
             "reference_file": imbalance_guard_cfg.get("reference_cond_eval_json") if imbalance_reference_by_bin is not None else None,
@@ -818,6 +931,7 @@ def main() -> None:
             "test": recon_test,
             "ood": recon_ood,
         },
+        "holdout_tail_test": holdout_tail_test,
     }
     save_json(run_paths["metrics"] / "summary.json", summary)
     logger.info("Training completed. Summary written to %s", run_paths["metrics"] / "summary.json")

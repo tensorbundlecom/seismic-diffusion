@@ -24,7 +24,7 @@ Ilk temiz ve tamamen izlenebilir baseline hattini kurmak.
 - D010: Checkpoint secim kriteri
 - D011: STFT sabitleri (n_fft/hop/window/frame semantigi)
 - D012: Condition-only latent sampling politikasi
-- D013: `best_condgen_composite` formulu ve gate kurallari
+- D013: `best_condgen_composite` formulu ve iki-asamali gate kurallari
 - D014: Onset picker parametreleri (window/confidence/failure)
 - D015: Imbalance guardrail esikleri (I3)
 
@@ -39,12 +39,17 @@ Ilk temiz ve tamamen izlenebilir baseline hattini kurmak.
 - D007: Frozen (complex L1 + log-magnitude L1; MR-STFT recipe not edildi)
 - D008: Frozen (complex_l1, mr_lsd, xcorr_max+lag, envelope_corr, band_energy_ratio_error, onset delta-t)
 - D009: Frozen (C: 180 epoch, AdamW, RLROP, early stopping)
-- D010: Frozen (C: best_val_loss + best_condgen_composite, duzenli run agaci)
+- D010: Frozen (C: `best_val_loss` (legacy) + `best_val_fair` (selection) + `best_condgen_composite`, duzenli run agaci)
 - D011: Frozen (`256/256/32`, hann, onesided, Nyquist-drop, `2x128x220`)
 - D012: Frozen (condition-only: `z~N(0,I)`, multi-sample aggregate, `K=8/32`, fixed seed bank)
-- D013: Frozen (gate + robust-z composite, aile agirliklari `0.35/0.45/0.20`)
+- D013: Frozen (iki-asamali gate + robust-z composite, aile agirliklari `0.35/0.45/0.20`)
 - D014: Frozen (max-derivative picker, `P±4s`, `S±6s`, `conf>=2.5`)
 - D015: Frozen (balanced guardrail: `M>=5 +5%`, `All <=8%`, `3<=M<5 <=10%`)
+
+Not (operasyonel):
+
+- Condition-only secim eval'i full-val uzerinde yapilir (`cond_eval_subset_size=null`).
+- `ge5` secim kapisinda kullanilmaz; yalnizca test-holdout olarak raporlanir.
 
 ## Freeze Kriteri
 
@@ -62,7 +67,7 @@ Tum D001-D015 kararlar `Frozen` olmadan kodlama baslamaz.
 - Complex normalize: real/imag ortak scale, global RMS (`B1`, `B2`)
 - STFT sabitleri: `256/256/32`, `hann`, onesided, Nyquist-drop, `2x128x220` (`D011`)
 - Condition-only sampling: `z~N(0,I)`, sweep `K=8`, final `K=32`, fixed seed bank (`D012`)
-- Condgen composite: pre-gate + robust-z aile skoru, final rerank `K=32` (`D013`)
+- Condgen composite: stage-1 onset gate + stage-2 quality gate + robust-z aile skoru, final rerank `K=32` (`D013`)
 - Onset picker: `max-derivative + confidence gate` ve sabit P/S pencereleri (`D014`)
 - Imbalance secim kapisi: balanced guardrail (`D015`)
 - Bilesen: Z-only (`C0`)

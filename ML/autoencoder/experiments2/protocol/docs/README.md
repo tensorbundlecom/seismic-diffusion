@@ -14,6 +14,8 @@ Bu klasor, `experiments2/exp001` icin insan-okur dokumanlarin tek toplama noktas
   - Domain problemi, nedenler, tasarim tradeofflari, metrik protokolleri.
 - `owner_review.md`
   - Manuel onset picker onay kayit sablonu.
+- `gate_audit.md`
+  - D013 iki-asamali gate esiklerinin audit/sweep ve manuel etiketleme protokolu.
 
 ## Okuma Sirasi (onerilen)
 
@@ -22,6 +24,7 @@ Bu klasor, `experiments2/exp001` icin insan-okur dokumanlarin tek toplama noktas
 3. `exp001_problem_and_design.md`
 4. `decision_contract.md`
 5. `owner_review.md`
+6. `gate_audit.md`
 
 ## Ilgili Raporlar
 

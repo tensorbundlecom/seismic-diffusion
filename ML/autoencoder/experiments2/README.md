@@ -35,9 +35,11 @@ Hedef: az ama net dosya yapisi ile adim adim ilerlemek.
   - Condition-only sample (`z ~ N(0,I)`)
 - `src/train.py`:
   - KL warmup + free-bits
-  - `best_val_loss.pt` + `best_condgen_composite.pt`
-  - D013 pre-gate + robust-z composite
+  - `best_val_loss.pt` (legacy tracking) + `best_val_fair.pt` (fair criterion) + `best_condgen_composite.pt`
+  - D013 iki-asamali gate (stage-1 onset health + stage-2 quality) + robust-z composite
   - D015 imbalance guardrail (stage-2 weighted run icin)
+  - Condition-only secim eval'i full-val uzerinden (subset kapali)
+  - `ge5` tail metrikleri secimde degil; test-holdout raporu olarak `metrics/cond_eval_holdout_test_final.json` dosyasina yazilir
   - Top-3 condgen aday ve final rerank
 - `src/evaluate.py`:
   - D008 metrikleri
@@ -110,6 +112,16 @@ python3 -m ML.autoencoder.experiments2.src.evaluate \
   --config ML/autoencoder/experiments2/configs/exp001_base.json \
   --checkpoint ML/autoencoder/experiments2/runs/exp001/run_YYYYMMDD_HHMM_exp001_base/checkpoints/best_condgen_composite.pt \
   --split all
+```
+
+### 3.1) D013 Gate Audit (onerilen)
+
+```bash
+python3 -m ML.autoencoder.experiments2.src.audit_gate \
+  --run-dirs ML/autoencoder/experiments2/runs/exp001/run_YYYYMMDD_HHMM_exp001_base \
+  --quality-enabled \
+  --out-json ML/autoencoder/experiments2/protocol/reports/gate_audit_exp001.json \
+  --out-md ML/autoencoder/experiments2/protocol/reports/gate_audit_exp001.md
 ```
 
 ## Kritik Pathler

@@ -14,7 +14,7 @@
 
 - `D011` donduruldu: STFT sabitleri (`256/256/32`, `2x128x220`).
 - `D012` donduruldu: condition-only latent sampling (`z~N(0,I)`, `K=8/32`, fixed seed bank).
-- `D013` donduruldu: `best_condgen_composite` (pre-gate + robust-z aile skoru).
+- `D013` donduruldu: `best_condgen_composite` (iki-asamali gate + robust-z aile skoru).
 - `D014` donduruldu: onset picker sayisal parametreleri (`P±4s`, `S±6s`, `conf>=2.5`).
 - `D015` donduruldu: imbalance guardrail esikleri (balanced).
 - `exp001` core kodu yazildi (`dataset/model/train/evaluate/visualize`).
@@ -72,6 +72,25 @@
   - `reports/` (audit/sanity ciktilari)
 - `exp001_base.json` ve `exp001_smoke.json` artifact yollari yeni frozen dizinlerine tasindi.
 - Smoke train/eval ile yeni dizin yapisi dogrulandi (layout check PASS).
+
+## 2026-03-01
+
+- D010 uygulama duzeltmesi:
+  - Warmup-adaleti icin `best_val_fair.pt` eklendi.
+  - Fair skor tanimi: `val_recon + beta_max * val_kl_fb`.
+  - `best_val_loss.pt` legacy takip olarak korunuyor.
+  - `best_condgen` fallback kaynagi `best_val_fair.pt` olarak guncellendi.
+- S2 uygulama duzeltmesi:
+  - Condition-only secim eval'i full-val olarak sabitlendi (`cond_eval_subset_size=null`).
+  - `ge5` metrikleri model seciminden cikarildi; yalnizca test-holdout raporu olarak tutuluyor.
+  - Final test holdout ciktilari: `metrics/cond_eval_holdout_test_final.json`.
+- S3 hazirlik:
+  - D013 esiklerinin audit/sweep protokolu eklendi (`src/audit_gate.py` + `protocol/docs/gate_audit.md`).
+  - Manuel etiket template'i eklendi (`protocol/reports/gate_labels_template.csv`).
+  - S3-C uygulamasi: iki-asamali gate aktiflestirildi:
+    - Stage-1 (onset-saglik): `onset_evaluable_rate >= 0.60`, `onset_failure_rate_p <= 0.05`, `onset_failure_rate_s <= 0.35`, `abs_xcorr_lag_s <= 3.0`
+    - Stage-2 (kalite): `xcorr_max >= 0.74`, `envelope_corr >= 0.69`, `mr_lsd <= 0.0195`, `onset_mae_dtps_s <= 2.0`
+  - `src/audit_gate.py` two-stage threshold sweep destekleyecek sekilde guncellendi.
 
 ## Decision Register
 
@@ -163,19 +182,25 @@
 
 - `ID`: D013
 - `Question`: `best_condgen_composite` skoru nasil tanimlanacak?
-- `Options`: A=`ham weighted-sum`, B=`min-max weighted-sum`, C=`rank-based`, D=`gate + robust z composite`
+- `Options`: A=`ham weighted-sum`, B=`min-max weighted-sum`, C=`rank-based`, D=`iki-asamali gate + robust z composite`
 - `Chosen`: D
 - `Why`: Metrikler farkli olcek ve farkli yonlerde. Ham/min-max toplamlarda olcek-dominasyonu riski yuksek. Gate + robust-z yaklasimi daha stabil, outlier'a daha dayanikli ve model karsilastirmasi icin daha adil.
 - `Impact`:
   - Kullanim alani:
     - Yalniz `best_condgen_composite.pt` secimi icin kullanilir.
     - Training loss/gradient icinde kullanilmaz.
-  - Pre-gate (zorunlu):
-    - `onset_evaluable_rate >= 0.70`
-    - `onset_failure_rate_p <= 0.30`
+  - Stage-1 pre-gate (zorunlu, onset-saglik):
+    - `onset_evaluable_rate >= 0.60`
+    - `onset_failure_rate_p <= 0.05`
     - `onset_failure_rate_s <= 0.35`
-    - `abs_xcorr_lag_s <= 2.5` (batch ortalama mutlak lag)
-    - Gate gecmeyen epoch `best_condgen` adayi olamaz.
+    - `abs_xcorr_lag_s <= 3.0` (batch ortalama mutlak lag)
+    - Stage-1 gecmeyen epoch `best_condgen` adayi olamaz.
+  - Stage-2 quality-gate (zorunlu):
+    - `xcorr_max >= 0.74`
+    - `envelope_corr >= 0.69`
+    - `mr_lsd <= 0.0195`
+    - `onset_mae_dtps_s <= 2.0`
+    - Stage-2 gecmeyen epoch `best_condgen` adayi olamaz.
   - Kalibrasyon:
     - Ilk `N_calib=6` condition-only eval sonucundan metric-wise `median` ve `MAD` hesaplanir.
     - `scale_i = 1.4826 * MAD_i + 1e-8`
@@ -386,8 +411,9 @@
 - `Chosen`: C
 - `Why`: D001 geregi iki gorev ayri raporlanacak; ana odak condition-only olsa da reconstruction takibi korunmali.
 - `Impact`:
-  - Her run icin yalniz iki resmi checkpoint yazilacak:
-    - `best_val_loss.pt`
+  - Her run icin uc resmi checkpoint yazilacak:
+    - `best_val_loss.pt` (legacy takip; `val_total` uzerinden)
+    - `best_val_fair.pt` (secim/fallback; `val_recon + beta_max * val_kl_fb`)
     - `best_condgen_composite.pt`
   - Diger epoch checkpointleri varsayilan olarak kapali tutulacak.
   - Run klasoru duzeni sabit:
@@ -399,7 +425,7 @@
     - `runs/exp001/run_YYYYMMDD_HHMM_<tag>/tmp/`
 - `Status`: Frozen
 - `Date`: 2026-02-24
-- `Note`: Orta-katman/gecici dosyalar `run_dir/tmp/` altinda tutulur; top-k disindakiler run icinde temizlenir. `best_condgen_composite` tanimi `D013` ile sabitlenmistir.
+- `Note`: Orta-katman/gecici dosyalar `run_dir/tmp/` altinda tutulur; top-k disindakiler run icinde temizlenir. `best_condgen_composite` tanimi `D013` ile sabitlenmistir. Warmup-adaleti icin fallback secimi `best_val_fair.pt` uzerinden yapilir.
 
 ### A0
 

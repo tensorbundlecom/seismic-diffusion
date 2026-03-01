@@ -67,10 +67,10 @@ Manifest butunluk politikasi (frozen):
 | D007 | Training loss | Complex L1 + LogMag L1 (+ KL regularization) |
 | D008 | Eval metrikleri | Secili zamanlama+spektral set |
 | D009 | Egitim butcesi | 180 epoch, AdamW, RLROP, early stopping |
-| D010 | Checkpoint politikasi | `best_val_loss.pt` + `best_condgen_composite.pt` |
+| D010 | Checkpoint politikasi | `best_val_loss.pt` (legacy) + `best_val_fair.pt` + `best_condgen_composite.pt` |
 | D011 | STFT sabitleri | `256/256/32`, `hann`, onesided, Nyquist-drop, `2x128x220` |
 | D012 | Condition-only latent sampling | `z~N(0,I)`, multi-sample aggregate (`K=8/32`), fixed seed bank |
-| D013 | Condgen composite | pre-gate + robust-z family composite (`0.35/0.45/0.20`) |
+| D013 | Condgen composite | iki-asamali gate + robust-z family composite (`0.35/0.45/0.20`) |
 | D014 | Onset picker parametreleri | max-derivative + confidence gate (`P±4s`, `S±6s`, `conf>=2.5`) |
 | D015 | Imbalance guardrail | balanced: `M>=5 +5%`, `All <=8%`, `3<=M<5 <=10%` |
 
@@ -328,20 +328,33 @@ Frozen budget:
 Checkpoint policy:
 
 - `best_val_loss.pt`
+- `best_val_fair.pt`
 - `best_condgen_composite.pt`
 
 Gecici dosyalar run sonunda temizlenir.
+
+Secim/eval politikasi notu:
+
+- Condition-only checkpoint secimi full-val condition eval uzerinden yapilir (subset yok).
+- `ge5` tail metrikleri secimde kullanilmaz; test-holdout olarak ayri raporlanir.
 
 ### 12.1) `best_condgen_composite` tanimi (frozen)
 
 Bu skor yalnizca checkpoint secimi icindir; training loss'un parcasi degildir.
 
-Pre-gate (zorunlu):
+Stage-1 gate (zorunlu, onset health):
 
-- `onset_evaluable_rate >= 0.70`
-- `onset_failure_rate_p <= 0.30`
+- `onset_evaluable_rate >= 0.60`
+- `onset_failure_rate_p <= 0.05`
 - `onset_failure_rate_s <= 0.35`
-- `abs_xcorr_lag_s <= 2.5` (batch ortalama mutlak lag)
+- `abs_xcorr_lag_s <= 3.0` (batch ortalama mutlak lag)
+
+Stage-2 gate (zorunlu, quality):
+
+- `xcorr_max >= 0.74`
+- `envelope_corr >= 0.69`
+- `mr_lsd <= 0.0195`
+- `onset_mae_dtps_s <= 2.0`
 
 Kalibrasyon:
 

@@ -38,6 +38,62 @@ def logmag_l1_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return F.l1_loss(torch.log1p(pred_mag), torch.log1p(true_mag), reduction="mean")
 
 
+def band_share_l1_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    cfg: Mapping[str, Any],
+) -> torch.Tensor:
+    """
+    Differentiable low/mid/high band-share loss for spectral density alignment.
+    """
+    stft_cfg = cfg["stft"]
+    eval_cfg = cfg["evaluation"]
+    fs = float(cfg["data"]["sampling_rate_hz"])
+    n_fft = int(stft_cfg["n_fft"])
+
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / fs)
+    if bool(stft_cfg["drop_nyquist"]):
+        freqs = freqs[:-1]
+    f_target = int(stft_cfg["target_freq_bins"])
+    if len(freqs) > f_target:
+        freqs = freqs[:f_target]
+    elif len(freqs) < f_target:
+        pad = np.full((f_target - len(freqs),), freqs[-1] if len(freqs) else 0.0)
+        freqs = np.concatenate([freqs, pad], axis=0)
+
+    low_lo, low_hi = eval_cfg["metric_bands_hz"]["low"]
+    mid_lo, mid_hi = eval_cfg["metric_bands_hz"]["mid"]
+    high_lo, high_hi = eval_cfg["metric_bands_hz"]["high"]
+
+    low_mask_np = (freqs >= float(low_lo)) & (freqs < float(low_hi))
+    mid_mask_np = (freqs >= float(mid_lo)) & (freqs < float(mid_hi))
+    high_mask_np = (freqs >= float(high_lo)) & (freqs < float(high_hi))
+    if not np.any(low_mask_np) or not np.any(mid_mask_np) or not np.any(high_mask_np):
+        raise ValueError("metric_bands_hz produced an empty mask for band-share loss.")
+
+    low_mask = torch.from_numpy(low_mask_np).to(device=pred.device)
+    mid_mask = torch.from_numpy(mid_mask_np).to(device=pred.device)
+    high_mask = torch.from_numpy(high_mask_np).to(device=pred.device)
+
+    pred_mag2 = pred[:, 0] * pred[:, 0] + pred[:, 1] * pred[:, 1]
+    true_mag2 = target[:, 0] * target[:, 0] + target[:, 1] * target[:, 1]
+
+    def _band_share(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        total = x.sum(dim=(1, 2)) + 1e-8
+        band = x[:, mask, :].sum(dim=(1, 2))
+        return band / total
+
+    pred_low = _band_share(pred_mag2, low_mask)
+    true_low = _band_share(true_mag2, low_mask)
+    pred_mid = _band_share(pred_mag2, mid_mask)
+    true_mid = _band_share(true_mag2, mid_mask)
+    pred_high = _band_share(pred_mag2, high_mask)
+    true_high = _band_share(true_mag2, high_mask)
+
+    err = (pred_low - true_low).abs() + (pred_mid - true_mid).abs() + (pred_high - true_high).abs()
+    return err.mean() / 3.0
+
+
 def kl_terms(
     mu: torch.Tensor,
     logvar: torch.Tensor,
@@ -56,12 +112,25 @@ def total_vae_loss(
     logvar: torch.Tensor,
     lambda_complex: float,
     lambda_logmag: float,
+    lambda_band: float,
     beta_t: float,
     free_bits_per_dim: float,
+    cfg: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, torch.Tensor]:
     loss_complex = complex_l1_loss(pred, target)
     loss_logmag = logmag_l1_loss(pred, target)
-    recon = float(lambda_complex) * loss_complex + float(lambda_logmag) * loss_logmag
+    if float(lambda_band) > 0.0:
+        if cfg is None:
+            raise ValueError("cfg must be provided when lambda_band > 0.")
+        loss_band = band_share_l1_loss(pred=pred, target=target, cfg=cfg)
+    else:
+        loss_band = loss_complex * 0.0
+
+    recon = (
+        float(lambda_complex) * loss_complex
+        + float(lambda_logmag) * loss_logmag
+        + float(lambda_band) * loss_band
+    )
     kl_raw, kl_fb = kl_terms(mu, logvar, free_bits_per_dim=float(free_bits_per_dim))
     total = recon + float(beta_t) * kl_fb
     return {
@@ -69,6 +138,7 @@ def total_vae_loss(
         "recon_total": recon,
         "loss_complex": loss_complex,
         "loss_logmag": loss_logmag,
+        "loss_band": loss_band,
         "kl_raw": kl_raw,
         "kl_fb": kl_fb,
     }
