@@ -1,0 +1,65 @@
+{
+  "diffusion_checkpoint": "ML/autoencoder/experiments/DDPMvsDDIM/runs/diffusion/diffusion_eventwise_v3_adaln_vpred/checkpoints/best.pt",
+  "stage1_checkpoint": "ML/autoencoder/experiments/DDPMvsDDIM/checkpoints/stage1_eventwise_v1_best.pt",
+  "ddim_steps_list": [
+    25,
+    50,
+    100
+  ],
+  "rows": [
+    {
+      "ddim_steps": 25,
+      "num_samples": 8838,
+      "avg_ddpm_spec_corr": 0.8963108183895907,
+      "avg_ddim_spec_corr": 0.898100108255696,
+      "avg_ddpm_lsd": 1.719407582976317,
+      "avg_ddim_lsd": 1.713792843330659,
+      "avg_ddpm_mr_lsd": 1.5742628222372574,
+      "avg_ddim_mr_lsd": 1.568037711444138,
+      "wall_time_min": 40.31172521171684,
+      "samples_per_sec": 3.654023717079377,
+      "avg_ddpm_total_time_ms": 233.3289700827192,
+      "avg_ddim_total_time_ms": 33.07637795671443,
+      "peak_rss_mb": 1664.62890625,
+      "peak_gpu_alloc_mb": 340.33984375,
+      "gpu_util_avg": 67.49533305048791,
+      "summary_path": "ML/autoencoder/experiments/DDPMvsDDIM/results/final_sampler_suite_v3/ddim_025/summary.json"
+    },
+    {
+      "ddim_steps": 50,
+      "num_samples": 8838,
+      "avg_ddpm_spec_corr": 0.8963108183712127,
+      "avg_ddim_spec_corr": 0.8968074441503682,
+      "avg_ddpm_lsd": 1.719407583232594,
+      "avg_ddim_lsd": 1.7169165735494014,
+      "avg_ddpm_mr_lsd": 1.5742628224688058,
+      "avg_ddim_mr_lsd": 1.5712594728763172,
+      "wall_time_min": 44.259289457882794,
+      "samples_per_sec": 3.3281148839990053,
+      "avg_ddpm_total_time_ms": 229.69141099499373,
+      "avg_ddim_total_time_ms": 63.52929893294554,
+      "peak_rss_mb": 1539.62109375,
+      "peak_gpu_alloc_mb": 340.33984375,
+      "gpu_util_avg": 68.69789453351362,
+      "summary_path": "ML/autoencoder/experiments/DDPMvsDDIM/results/final_sampler_suite_v3/ddim_050/summary.json"
+    },
+    {
+      "ddim_steps": 100,
+      "num_samples": 8838,
+      "avg_ddpm_spec_corr": 0.896310818395911,
+      "avg_ddim_spec_corr": 0.8961269860722297,
+      "avg_ddpm_lsd": 1.7194075829493403,
+      "avg_ddim_lsd": 1.7186483478797023,
+      "avg_ddpm_mr_lsd": 1.5742628223474113,
+      "avg_ddim_mr_lsd": 1.5730411373935889,
+      "wall_time_min": 53.613613152366206,
+      "samples_per_sec": 2.7474365434275714,
+      "avg_ddpm_total_time_ms": 230.88640332944001,
+      "avg_ddim_total_time_ms": 125.96267077888054,
+      "peak_rss_mb": 1671.24609375,
+      "peak_gpu_alloc_mb": 340.33984375,
+      "gpu_util_avg": 67.76782012438207,
+      "summary_path": "ML/autoencoder/experiments/DDPMvsDDIM/results/final_sampler_suite_v3/ddim_100/summary.json"
+    }
+  ]
+}

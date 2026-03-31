@@ -1,0 +1,31 @@
+{
+  "checkpoint": "ML/autoencoder/experiments/DDPMvsDDIM/checkpoints/stage1_eventwise_v1_best.pt",
+  "config": {
+    "latent_dim": 128,
+    "cond_embedding_dim": 64,
+    "w_dim": 64,
+    "num_stations": 46,
+    "in_channels": 3,
+    "beta": 0.1,
+    "lr": 0.0001,
+    "seed": 42,
+    "split_file": "ML/autoencoder/experiments/DDPMvsDDIM/protocol/eventwise_split_v1.json",
+    "run_name": "stage1_eventwise_v1"
+  },
+  "subset_size": 64,
+  "mean_spec_corr": 0.958236297532109,
+  "mean_mu_norm": 9.332015231251717,
+  "mean_logvar": -1.5611003190279007,
+  "per_dim_mu_std_mean": 0.7909547686576843,
+  "gate_checks": {
+    "finite_tensors": true,
+    "mean_spec_corr_ge_0p88": true,
+    "mean_mu_norm_in_range": true,
+    "mean_logvar_in_range": true,
+    "per_dim_mu_std_mean_ge_0p01": true,
+    "visual_review_required": true
+  },
+  "automatic_gate_pass": true,
+  "visual_review_required": true,
+  "visual_review_note": "First 8 STFT sanity plots must be reviewed manually before diffusion training."
+}

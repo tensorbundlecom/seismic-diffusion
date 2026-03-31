@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.pid
+logs/
+runs/
+data_cache/
+visualizations/
+checkpoints/*.pt
+
+# Keep generated results out of git by default, but preserve the compact
+# official summaries that the docs point to.
+results/*
+!results/final_sampler_suite_v3/
+results/final_sampler_suite_v3/*
+!results/final_sampler_suite_v3/suite_summary.json
+!results/final_sampler_suite_v3/suite_summary.md
+!results/stage1_sanity_gate/
+results/stage1_sanity_gate/*
+!results/stage1_sanity_gate/summary.json
