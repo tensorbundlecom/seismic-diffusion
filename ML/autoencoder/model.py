@@ -40,17 +40,18 @@ class Decoder(nn.Module):
         # uses interpolate() to restore the exact original spatial dimensions.
         self.decoder = nn.Sequential(
             # Input: (latent_channels, H/8, W/8)
-            nn.ConvTranspose2d(latent_channels, 128, kernel_size=3, stride=2, padding=1, output_padding=1),
+            # Use kernel_size=4, stride=2, padding=1 to reduce checkerboard artifacts.
+            nn.ConvTranspose2d(latent_channels, 128, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
             # Output: (~128, H/4, W/4)
 
-            nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
             # Output: (~64, H/2, W/2)
 
-            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
             # Output: (~32, H, W)
@@ -776,95 +777,3 @@ def get_cvae_model(in_channels=3, latent_channels=128, num_stations=100, conditi
     return model
 
 
-if __name__ == "__main__":
-    # Test the models
-    print("="*60)
-    print("Testing Convolutional Autoencoder...")
-    print("="*60)
-    
-    # Create model
-    model = ConvAutoencoder(in_channels=3, latent_dim=128)
-    print(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters")
-
-    # Test with a sample input
-    x = torch.randn(8, 3, 256, 256)
-    print(f"\nInput shape: {x.shape}")
-
-    # Forward pass
-    reconstructed = model(x)
-    print(f"Reconstructed shape: {reconstructed.shape}")
-
-    # Test embedding creation
-    embedding = model.create_embedding(x)
-    print(f"Embedding shape: {embedding.shape}")
-
-    print("\n" + "="*60)
-    print("Testing Variational Autoencoder...")
-    print("="*60)
-
-    vae = VariationalAutoencoder(in_channels=3, latent_channels=128)
-    print(f"VAE created with {sum(p.numel() for p in vae.parameters()):,} parameters")
-
-    print(f"\nInput shape: {x.shape}")
-
-    # Forward pass
-    reconstructed, mu, logvar = vae(x)
-    print(f"Reconstructed shape: {reconstructed.shape}")
-    print(f"Mu shape: {mu.shape}")
-    print(f"Logvar shape: {logvar.shape}")
-
-    # Test embedding creation
-    embedding = vae.create_embedding(x)
-    print(f"Embedding shape: {embedding.shape}")
-
-    # Test sampling
-    samples = vae.sample(4)
-    print(f"Samples shape: {samples.shape}")
-
-    print("\n" + "="*60)
-    print("Testing Conditional Variational Autoencoder...")
-    print("="*60)
-    
-    cvae = ConditionalVariationalAutoencoder(
-        in_channels=3,
-        latent_channels=128,
-        num_stations=50,
-        condition_dim=64
-    )
-    print(f"CVAE created with {sum(p.numel() for p in cvae.parameters()):,} parameters")
-    
-    # Create conditioning data
-    magnitude = torch.randn(batch_size)  # Random magnitudes
-    location = torch.randn(batch_size, 3)  # Random normalized locations [lat, lon, depth]
-    station_idx = torch.randint(0, 50, (batch_size,))  # Random station indices
-    
-    print(f"\nInput shape: {x.shape}")
-    print(f"Magnitude shape: {magnitude.shape}")
-    print(f"Location shape: {location.shape}")
-    print(f"Station indices shape: {station_idx.shape}")
-    
-    # Forward pass
-    reconstructed, mu, logvar = cvae(x, magnitude, location, station_idx)
-    print(f"\nReconstructed shape: {reconstructed.shape}")
-    print(f"Mu shape: {mu.shape}")
-    print(f"Logvar shape: {logvar.shape}")
-    
-    # Test loss calculation
-    total_loss, recon_loss, kl_loss = cvae.loss_function(reconstructed, x, mu, logvar, beta=1.0)
-    print(f"\nLoss calculation:")
-    print(f"  Total loss: {total_loss.item():.4f}")
-    print(f"  Reconstruction loss: {recon_loss.item():.4f}")
-    print(f"  KL divergence: {kl_loss.item():.4f}")
-    
-    # Test conditional sampling
-    samples = cvae.sample(
-        num_samples=2,
-        magnitude=magnitude[:2],
-        location=location[:2],
-        station_idx=station_idx[:2],
-        device='cpu'
-    )
-    print(f"\nConditional generated samples shape: {samples.shape}")
-    
-    print("\nCVAE test successful!")
-    print("="*60)

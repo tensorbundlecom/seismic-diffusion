@@ -13,3 +13,4 @@ ML/diffusion/logs/*
 data.zip
 ML/diffusion/runs/diffusion/*
 ML/autoencoder/runs/diffusion/*
+ML/diffusion/runs/diffusion_stft/*
