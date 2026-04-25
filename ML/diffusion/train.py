@@ -300,16 +300,16 @@ args = parser.parse_args()
 
 # --- Config ---
 NUM_EPOCHS = 500
-BATCH_SIZE = 4
+BATCH_SIZE = 32
 LR = 1e-4
 NUM_TRAIN_TIMESTEPS = 1000
-BETA_START = 1e-5
+BETA_START = 1e-4
 BETA_END = 0.02
 CHECKPOINT_EVERY_N_EPOCHS = 1
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-PREDICTION_TARGET = "sample" if args.prediction_target == "x0" else args.prediction_target
-STATION_EMB_DIM = 16
-NUM_CONTINUOUS = 4
+PREDICTION_TARGET = "sample" if args.prediction_target == "x0" else args.prediction_target  # HF scheduler name
+STATION_EMB_DIM = 64
+NUM_CONTINUOUS = 6
 
 writer = SummaryWriter(log_dir=f"runs/diffusion_{args.data_mode}")
 
@@ -407,6 +407,7 @@ noise_scheduler = DDPMScheduler(
     beta_start=BETA_START,
     beta_end=BETA_END,
     prediction_type=PREDICTION_TARGET,
+    clip_sample=False,  # latents are ~N(0,1); default clip to [-1,1] corrupts inference
 )
 print(f"Prediction target: {args.prediction_target} (scheduler prediction_type={PREDICTION_TARGET})")
 
@@ -424,14 +425,13 @@ scale_payload = {
 }
 json.dump(scale_payload, open("embeddings/scale.json", "w"))
 
-optimizer = AdamW(model.parameters(), lr=LR, weight_decay=0.0)
+optimizer = AdamW(model.parameters(), lr=LR, weight_decay=1e-2)
 
-# Per-step LR schedule
-WARMUP_EPOCHS = 0
+# Per-step LR schedule — warmup is capped at 10% of total steps so short runs aren't hurt
 MIN_LR_RATIO = 0.1
 STEPS_PER_EPOCH = max(1, len(dataloader))
 TOTAL_TRAIN_STEPS = NUM_EPOCHS * STEPS_PER_EPOCH
-WARMUP_STEPS = min(WARMUP_EPOCHS * STEPS_PER_EPOCH, max(TOTAL_TRAIN_STEPS - 1, 0))
+WARMUP_STEPS = min(200, max(TOTAL_TRAIN_STEPS // 10, 0))
 
 
 def _lr_for_step(step_idx: int) -> float:
@@ -585,14 +585,14 @@ for epoch in range(NUM_EPOCHS):
 
         model_pred = model.forward(noisy_data, timesteps, cond).sample
 
-        if PREDICTION_TARGET == "epsilon":
+        if args.prediction_target == "epsilon":
             target = noise
-        elif PREDICTION_TARGET == "sample":
+        elif args.prediction_target == "x0":
             target = batch_data
-        elif PREDICTION_TARGET == "v_prediction":
+        elif args.prediction_target == "v_prediction":
             target = noise_scheduler.get_velocity(batch_data, noise, timesteps)
         else:
-            raise ValueError(f"Unsupported prediction_type: {PREDICTION_TARGET}")
+            raise ValueError(f"Unsupported prediction_target: {args.prediction_target}")
 
         loss = torch.nn.functional.mse_loss(model_pred, target)
 
@@ -605,6 +605,9 @@ for epoch in range(NUM_EPOCHS):
         epoch_loss += loss.item()
         if args.log_images_every_n_batches > 0 and (global_step % args.log_images_every_n_batches == 0):
             _log_preview_images(global_step, epoch)
+            model.train()
+            _save_checkpoint(f"step_{global_step}")
+            _cleanup_checkpoints("step_*", args.keep_last_batch_checkpoints)
         if args.checkpoint_every_n_batches > 0 and (global_step % args.checkpoint_every_n_batches == 0):
             _save_checkpoint(f"step_{global_step}")
             _cleanup_checkpoints("step_*", args.keep_last_batch_checkpoints)

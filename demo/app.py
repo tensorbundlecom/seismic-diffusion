@@ -160,9 +160,10 @@ def _load_diffusion_scheduler(diff_ckpt: Path) -> DDPMScheduler:
     )
     return DDPMScheduler(
         num_train_timesteps=NUM_TRAIN_TIMESTEPS,
-        beta_start=1e-5,
+        beta_start=1e-4,
         beta_end=0.02,
         prediction_type="epsilon",
+        clip_sample=False,
     )
 
 
@@ -433,6 +434,9 @@ def generate(diff_unet, ae_model, scheduler, emb_shape,
     # Build conditioning vector (raw, then normalise)
     if hasattr(diff_unet, "station_embedding"):
         cond_vec = create_conditioning_vector(cond_meta, station_locations)
+        expected_width = diff_unet.num_continuous + 1
+        if cond_vec.shape[0] > expected_width:
+            cond_vec = torch.cat([cond_vec[:diff_unet.num_continuous], cond_vec[-1:]])
     else:
         cond_vec = _create_legacy_conditioning_vector(cond_meta)
     cond_norm = normalise_cond(cond_vec).unsqueeze(0).unsqueeze(0).to(DEVICE)
@@ -485,6 +489,7 @@ class SeismicDemoApp(tk.Tk):
         self._data_mode     = "latent"
         self._normalise_cond = lambda v: v
         self._station_locations = {}
+        self._train_metadatas   = []
         self._generating    = False
         self._latest_spec   = None
         self._latest_title  = ""
@@ -548,6 +553,7 @@ class SeismicDemoApp(tk.Tk):
             ("Latitude",    "lat", MARMARA_LAT_MIN, MARMARA_LAT_MAX, 40.70, ".3f"),
             ("Longitude",   "lon", MARMARA_LON_MIN, MARMARA_LON_MAX, 28.00, ".3f"),
             ("Depth  (km)", "dep", 0.0,   29.7,  10.0,  ".1f"),
+            ("SNR",         "snr", 1.0,   30.0,   5.0,  ".1f"),
         ]
         self._svars = {}
         for label, key, lo, hi, default, fmt in sliders:
@@ -569,6 +575,10 @@ class SeismicDemoApp(tk.Tk):
         self._build_griffin_lim_controls(ctrl)
         ttk.Separator(ctrl, orient="horizontal").pack(fill="x", pady=10)
 
+        self._rand_btn = ttk.Button(ctrl, text="🎲  Random EQ",
+                                    command=self._on_random_eq, state="disabled")
+        self._rand_btn.pack(fill="x", pady=(0, 4))
+
         self._gen_btn = ttk.Button(ctrl, text="⚡  Generate",
                                    command=self._on_generate, state="disabled")
         self._gen_btn.pack(fill="x", ipady=8)
@@ -583,13 +593,13 @@ class SeismicDemoApp(tk.Tk):
         gl_frame.columnconfigure(1, weight=1)
 
         self._gl_vars = {
-            "n_iter": tk.IntVar(value=GRIFFIN_LIM_ITERS),
-            "momentum": tk.DoubleVar(value=GRIFFIN_LIM_MOMENTUM),
+            "n_iter": tk.IntVar(value=900),
+            "momentum": tk.DoubleVar(value=0.9),
             "inv_log_gain": tk.DoubleVar(value=3.0),
-            "hop_length": tk.IntVar(value=NPERSEG - NOVERLAP),
-            "win_length": tk.IntVar(value=NPERSEG),
-            "n_fft": tk.IntVar(value=NFFT),
-            "window": tk.StringVar(value=GRIFFIN_LIM_WINDOW),
+            "hop_length": tk.IntVar(value=32),
+            "win_length": tk.IntVar(value=1024),
+            "n_fft": tk.IntVar(value=1024),
+            "window": tk.StringVar(value="bartlett"),
             "center": tk.BooleanVar(value=GRIFFIN_LIM_CENTER),
             "random_state": tk.IntVar(value=GRIFFIN_LIM_RANDOM_STATE),
             "use_length": tk.BooleanVar(value=False),
@@ -662,11 +672,7 @@ class SeismicDemoApp(tk.Tk):
         self._gl_update_btn.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
     def _sync_griffin_lim_defaults_from_stft(self):
-        if not hasattr(self, "_gl_vars"):
-            return
-        self._gl_vars["hop_length"].set(max(1, NPERSEG - NOVERLAP))
-        self._gl_vars["win_length"].set(max(1, NPERSEG))
-        self._gl_vars["n_fft"].set(max(2, NFFT))
+        pass
 
     def _get_griffin_lim_params_from_ui(self) -> dict:
         if not hasattr(self, "_gl_vars"):
@@ -744,16 +750,17 @@ class SeismicDemoApp(tk.Tk):
     def _build_plots(self, parent):
         plots = ttk.Frame(parent)
         plots.grid(row=0, column=1, sticky="nsew")
-        plots.rowconfigure(0, weight=2)
-        plots.rowconfigure(1, weight=3)
-        plots.columnconfigure(0, weight=2)
-        plots.columnconfigure(1, weight=3)
+        plots.rowconfigure(0, weight=1)   # map
+        plots.rowconfigure(1, weight=2)   # reference row
+        plots.rowconfigure(2, weight=2)   # generated row
+        plots.columnconfigure(0, weight=1)  # STFT column
+        plots.columnconfigure(1, weight=2)  # waveform column
 
         # ── Map ────────────────────────────────────────────────────────────────
         map_frame = ttk.LabelFrame(plots, text="Marmara Stations & Earthquake", padding=4)
-        map_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 6), padx=(0, 6))
+        map_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", pady=(0, 6))
 
-        self._map_fig, self._map_ax = plt.subplots(figsize=(4.2, 2.8), facecolor=BG)
+        self._map_fig, self._map_ax = plt.subplots(figsize=(11, 2.8), facecolor=BG)
         self._style_ax(self._map_ax)
         self._map_ax.set_xlabel("Longitude", color=SUBTEXT, fontsize=8)
         self._map_ax.set_ylabel("Latitude", color=SUBTEXT, fontsize=8)
@@ -761,12 +768,37 @@ class SeismicDemoApp(tk.Tk):
         self._map_canvas = FigureCanvasTkAgg(self._map_fig, map_frame)
         self._map_canvas.get_tk_widget().pack(fill="both", expand=True)
 
-        # ── Spectrogram ───────────────────────────────────────────────────────
-        spec_frame = ttk.LabelFrame(plots, text="Generated Spectrogram  (E / N / Z channels)", padding=4)
-        spec_frame.grid(row=0, column=1, sticky="nsew", pady=(0, 6))
+        # ── Reference row ─────────────────────────────────────────────────────
+        ref_frame = ttk.LabelFrame(plots, text="Reference STFT  (E / N / Z)", padding=4)
+        ref_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 6), padx=(0, 6))
 
-        self._spec_fig, self._spec_axes = plt.subplots(
-            1, 3, figsize=(7.2, 2.8), facecolor=BG)
+        self._ref_fig, self._ref_axes = plt.subplots(1, 3, figsize=(5.5, 2.8), facecolor=BG)
+        self._ref_fig.subplots_adjust(left=0.04, right=0.99, top=0.84, bottom=0.14, wspace=0.3)
+        for ax, ch in zip(self._ref_axes, ["E", "N", "Z"]):
+            self._style_ax(ax)
+            ax.set_title(ch, color=SUBTEXT, fontsize=10)
+            ax.set_xlabel("Time bins", color=SUBTEXT, fontsize=8)
+            ax.set_ylabel("Freq bins", color=SUBTEXT, fontsize=8)
+        self._ref_canvas = FigureCanvasTkAgg(self._ref_fig, ref_frame)
+        self._ref_canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        ref_wav_frame = ttk.LabelFrame(plots, text="Reference Waveform  (E / N / Z)", padding=4)
+        ref_wav_frame.grid(row=1, column=1, sticky="nsew", pady=(0, 6))
+
+        self._ref_wav_fig, self._ref_wav_axes = plt.subplots(3, 1, figsize=(6, 2.8), facecolor=BG, sharex=True)
+        self._ref_wav_fig.subplots_adjust(left=0.06, right=0.99, top=0.95, bottom=0.10, hspace=0.08)
+        for ax, ch in zip(self._ref_wav_axes, ["E", "N", "Z"]):
+            self._style_ax(ax)
+            ax.set_ylabel(ch, color=TEXT, fontsize=9)
+        self._ref_wav_axes[-1].set_xlabel("Time (s)", color=TEXT, fontsize=9)
+        self._ref_wav_canvas = FigureCanvasTkAgg(self._ref_wav_fig, ref_wav_frame)
+        self._ref_wav_canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        # ── Generated row ─────────────────────────────────────────────────────
+        spec_frame = ttk.LabelFrame(plots, text="Generated STFT  (E / N / Z)", padding=4)
+        spec_frame.grid(row=2, column=0, sticky="nsew", padx=(0, 6))
+
+        self._spec_fig, self._spec_axes = plt.subplots(1, 3, figsize=(5.5, 2.8), facecolor=BG)
         self._spec_fig.subplots_adjust(left=0.04, right=0.99, top=0.84, bottom=0.14, wspace=0.3)
         for ax, ch in zip(self._spec_axes, ["E", "N", "Z"]):
             self._style_ax(ax)
@@ -778,7 +810,7 @@ class SeismicDemoApp(tk.Tk):
 
         # ── Waveforms ─────────────────────────────────────────────────────────
         wav_frame = ttk.LabelFrame(plots, text="Reconstructed Waveform via Griffin-Lim  (E / N / Z)", padding=4)
-        wav_frame.grid(row=1, column=0, columnspan=2, sticky="nsew")
+        wav_frame.grid(row=2, column=1, sticky="nsew")
 
         self._wav_fig, self._wav_axes = plt.subplots(
             3, 1, figsize=(11, 3.8), facecolor=BG, sharex=True)
@@ -807,6 +839,11 @@ class SeismicDemoApp(tk.Tk):
             self._data_mode      = str(scale.get("data_mode", "latent")).lower()
             self._normalise_cond = _make_normalise_cond(scale)
             self._station_locations = _load_station_locations()
+
+            meta_path = DIFF / "embeddings" / "metadata.json"
+            if meta_path.exists():
+                self._train_metadatas = json.load(open(meta_path))
+                print(f"[demo] Loaded {len(self._train_metadatas):,} training metadata entries")
 
             available_stations = [s for s in STATION_NAMES if s in self._station_locations]
             missing_stations = [s for s in STATION_NAMES if s not in self._station_locations]
@@ -921,6 +958,7 @@ class SeismicDemoApp(tk.Tk):
 
             self._set_status("Models ready ✓", GREEN)
             self.after(0, lambda: self._gen_btn.config(state="normal"))
+            self.after(0, lambda: self._rand_btn.config(state="normal"))
 
         except FileNotFoundError as exc:
             self._set_status(str(exc), RED)
@@ -931,6 +969,91 @@ class SeismicDemoApp(tk.Tk):
 
     def _set_status(self, msg: str, colour: str = TEXT):
         self.after(0, lambda: self._status_lbl.config(text=msg, foreground=colour))
+
+    def _draw_reference_stft(self, spec: np.ndarray, title: str = ""):
+        for ax, channel, col in zip(self._ref_axes, spec, CH_COLS):
+            ax.cla()
+            self._style_ax(ax)
+            ax.imshow(channel, origin="lower", aspect="auto", cmap="inferno")
+            ax.set_xlabel("Time bins", color=SUBTEXT, fontsize=8)
+            ax.set_ylabel("Freq bins", color=SUBTEXT, fontsize=8)
+        self._ref_fig.suptitle(title, color=TEXT, fontsize=9)
+        self._ref_canvas.draw()
+
+    def _load_reference_data(self, file_path: str):
+        """Returns (spec (3,F,T), waves (3,N), sampling_rate)."""
+        from obspy import read as obspy_read
+        from scipy import signal as sp_signal
+
+        path = (DIFF / file_path).resolve()
+        stream = obspy_read(str(path))
+        stream.sort(keys=["channel"])
+
+        stft_channels = []
+        wave_channels = []
+        sr = stream[0].stats.sampling_rate
+        for trace in stream:
+            data = trace.data.astype(np.float32)
+            wave_channels.append(data)
+            _, _, zxx = sp_signal.stft(
+                data,
+                fs=trace.stats.sampling_rate,
+                nperseg=NPERSEG,
+                noverlap=NOVERLAP,
+                nfft=NFFT,
+                return_onesided=True,
+                boundary="zeros",
+                padded=True,
+            )
+            mag = np.log1p(np.abs(zxx))
+            mag_min, mag_max = mag.min(), mag.max()
+            if mag_max > mag_min:
+                mag = (mag - mag_min) / (mag_max - mag_min)
+            else:
+                mag = np.zeros_like(mag)
+            stft_channels.append(mag)
+
+        spec  = np.stack(stft_channels, axis=0)   # (3, F, T)
+        waves = np.stack(wave_channels,  axis=0)   # (3, N)
+        return spec, waves, sr
+
+    def _draw_reference_waveform(self, waves: np.ndarray, sr: float):
+        n = waves.shape[1]
+        t = np.linspace(0.0, n / sr, num=n, endpoint=False)
+        for ax, wave, ch, col in zip(self._ref_wav_axes, waves, ["E", "N", "Z"], CH_COLS):
+            ax.cla()
+            self._style_ax(ax)
+            ax.plot(t, wave, color=col, lw=0.8)
+            ax.axhline(0, color=SUBTEXT, lw=0.5, ls="--")
+            ax.set_ylabel(ch, color=TEXT, fontsize=9)
+            ax.set_xlim(t[0], t[-1])
+        self._ref_wav_axes[-1].set_xlabel("Time (s)", color=TEXT, fontsize=9)
+        self._ref_wav_canvas.draw()
+
+    def _on_random_eq(self):
+        import random
+        if not self._train_metadatas:
+            self._set_status("No training metadata loaded.", RED)
+            return
+        m = random.choice(self._train_metadatas)
+        self._svars["mag"].set(float(m["magnitude"]))
+        self._svars["lat"].set(float(m["latitude"]))
+        self._svars["lon"].set(float(m["longitude"]))
+        self._svars["dep"].set(float(m["depth"]))
+        if "snr" in m and "snr" in self._svars:
+            self._svars["snr"].set(float(m["snr"]))
+        station = m.get("station_name", "")
+        if station in STATION_NAMES and station in self._station_locations:
+            self._station_var.set(station)
+
+        try:
+            spec, waves, sr = self._load_reference_data(m["file_path"])
+            title = (f"M{m['magnitude']:.1f}  {m.get('location_name', '')}  "
+                     f"station={station}  SNR={m.get('snr', 0):.1f}")
+            self._draw_reference_stft(spec, title)
+            self._draw_reference_waveform(waves, sr)
+        except Exception as exc:
+            self._set_status(f"Could not load reference data:\n{exc}", RED)
 
     # ── Generate callback ─────────────────────────────────────────────────────
     def _on_generate(self):
@@ -950,6 +1073,7 @@ class SeismicDemoApp(tk.Tk):
             "latitude":    self._svars["lat"].get(),
             "longitude":   self._svars["lon"].get(),
             "depth":       self._svars["dep"].get(),
+            "snr":         self._svars["snr"].get(),
             "station_name": station_name,
             "station_idx": station_idx,
         }
@@ -958,6 +1082,7 @@ class SeismicDemoApp(tk.Tk):
             f"lat={self._cond_meta_at_generate['latitude']:.3f}  "
             f"lon={self._cond_meta_at_generate['longitude']:.3f}  "
             f"depth={self._cond_meta_at_generate['depth']:.1f} km  "
+            f"SNR={self._cond_meta_at_generate['snr']:.1f}  "
             f"station={station_name}"
         )
         self._gl_params_at_generate = self._get_griffin_lim_params_from_ui()

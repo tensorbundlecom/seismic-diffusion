@@ -7,6 +7,7 @@ import json
 import re
 from pathlib import Path
 
+import pandas as pd
 import torch
 from tqdm import tqdm
 
@@ -75,6 +76,12 @@ def parse_args():
         help="Directory where embeddings.pt / metadata.json / source.json are saved",
     )
     parser.add_argument(
+        "--waveform_summary",
+        type=str,
+        default=None,
+        help="Path to waveform_summary.csv; if provided, snr_max is added to each metadata entry",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default="cuda" if torch.cuda.is_available() else "cpu",
@@ -115,6 +122,14 @@ def main():
         log_scale=True,
     )
 
+    snr_lookup = {}
+    if args.waveform_summary:
+        summary = pd.read_csv(args.waveform_summary)
+        summary["snr_max"] = summary[["snr1", "snr2", "snr3"]].max(axis=1)
+        for _, row in summary.iterrows():
+            key = Path(row["waveform_file"]).name
+            snr_lookup[key] = float(row["snr_max"])
+
     embeddings = []
     metadatas = []
     for sample in tqdm(dataset, desc="Encoding"):
@@ -127,6 +142,7 @@ def main():
         x = spectrogram_tensor.unsqueeze(0).to(device)
         with torch.no_grad():
             embedding = model.create_embedding(x)[0].cpu().squeeze(0)
+        metadata["snr"] = snr_lookup.get(Path(metadata["file_path"]).name, 1.0)
         embeddings.append(embedding)
         metadatas.append(metadata)
 

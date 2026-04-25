@@ -724,7 +724,7 @@ def parse_args():
                         help='EMA decay for loss-term normalization (used with --normalize_loss_terms).')
     parser.add_argument('--loss_norm_eps', type=float, default=1e-8,
                         help='Numerical epsilon for loss-term normalization.')
-    
+
     # Training arguments
     parser.add_argument('--batch_size', type=int, default=16,
                         help='Batch size for training')

@@ -6,7 +6,7 @@ from typing import Dict
 import torch
 from diffusers import UNet2DConditionModel
 
-NUM_CONTINUOUS = 4  # magnitude, 2D distance (km), angle (deg), depth
+NUM_CONTINUOUS = 6  # magnitude, 2D distance (km), sin(azimuth), cos(azimuth), depth, snr
 
 
 class DiffusionUNet2D:
@@ -17,7 +17,7 @@ class DiffusionUNet2D:
         in_channels,
         out_channels,
         num_stations,
-        station_emb_dim=16,
+        station_emb_dim=64,
         num_continuous=NUM_CONTINUOUS,
         base_channels=64,
     ):
@@ -121,8 +121,11 @@ class DiffusionUNet2D:
 
 def create_conditioning_vector(metadata: Dict, station_locations: Dict[str, Dict[str, float]]):
     """
-    Returns conditioning vector of shape (5,) as:
-    [magnitude, 2d_distance_km, angle_deg, depth_km, station_idx]
+    Returns conditioning vector of shape (7,) as:
+    [magnitude, 2d_distance_km, sin(azimuth), cos(azimuth), depth_km, snr, station_idx]
+
+    Azimuth is encoded as sin/cos to preserve its circular topology — raw degrees
+    would make 1° and 359° appear maximally different after z-score normalization.
     """
     station_name = metadata["station_name"]
     if station_name not in station_locations:
@@ -164,10 +167,12 @@ def create_conditioning_vector(metadata: Dict, station_locations: Dict[str, Dict
         [
             float(metadata["magnitude"]),
             distance_km,
-            float(azimuth_deg),
+            math.sin(math.radians(azimuth_deg)),
+            math.cos(math.radians(azimuth_deg)),
             float(metadata["depth"]),
+            float(metadata["snr"]),
         ],
         dtype=torch.float32,
     )
     station_idx = torch.tensor([float(metadata["station_idx"])], dtype=torch.float32)
-    return torch.cat([continuous, station_idx])  # (5,)
+    return torch.cat([continuous, station_idx])  # (7,)

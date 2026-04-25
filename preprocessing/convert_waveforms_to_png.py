@@ -38,8 +38,8 @@ def convert_waveform_to_png(mseed_path, png_path):
 
 def main():
     # Define base directories
-    waveforms_dir = Path("data/filtered_waveforms")
-    png_dir = Path("data/filtered_png")
+    waveforms_dir = Path("data/filtered_waveforms_snr2_2-15hz")
+    png_dir = Path("data/filtered_png_snr2_2-15hz")
     
     # Find all mseed files
     mseed_files = list(waveforms_dir.glob("**/*.mseed"))
