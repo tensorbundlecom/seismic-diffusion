@@ -15,3 +15,6 @@ ML/diffusion/runs/diffusion/*
 ML/autoencoder/runs/diffusion/*
 ML/diffusion/runs/diffusion_stft/*
 ML/diffusion/runs/diffusion_latent/*
+ML/diffusion/train.py
+ML/diffusion/runs/diffusion_latent_flow_matching/
+Seismic Diffusion Project.zip

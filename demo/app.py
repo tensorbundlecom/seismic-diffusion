@@ -192,20 +192,40 @@ def _read_diffusion_training_config(diff_ckpt: Path):
 def _find_latest_diffusion_checkpoint():
     """
     Return latest diffusion checkpoint dir by mtime.
-    Supports epoch_*/step_* folders and final unet2d folder.
+    Searches type-specific subdirs (ddpm/, flow_matching/) then legacy top-level dirs.
     """
     ckpt_root = DIFF / "checkpoints"
     if not ckpt_root.exists():
         return None, None
 
     candidates = []
+    for type_name in ("ddpm", "flow_matching"):
+        type_root = ckpt_root / type_name
+        if type_root.exists():
+            for p in type_root.iterdir():
+                if p.is_dir() and (p / "config.json").exists():
+                    candidates.append(p)
     for p in ckpt_root.iterdir():
-        if not p.is_dir():
+        if not p.is_dir() or p.name in ("ddpm", "flow_matching"):
             continue
-        if not (p / "config.json").exists():
-            continue
-        candidates.append(p)
+        if (p / "config.json").exists():
+            candidates.append(p)
 
+    if not candidates:
+        return None, None
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+    return latest, _read_diffusion_unet_config(latest)
+
+
+def _find_latest_checkpoint_by_type(training_type: str):
+    """Find latest checkpoint in checkpoints/{training_type}/ subfolder."""
+    ckpt_root = DIFF / "checkpoints" / training_type
+    if not ckpt_root.exists():
+        return None, None
+    candidates = [
+        p for p in ckpt_root.iterdir()
+        if p.is_dir() and (p / "config.json").exists()
+    ]
     if not candidates:
         return None, None
     latest = max(candidates, key=lambda p: p.stat().st_mtime)
@@ -424,14 +444,17 @@ def generate(diff_unet, ae_model, scheduler, emb_shape,
              step_callback=None, update_every: int = 50,
              griffin_lim_params=None,
              data_mode: str = "latent",
-             emb_mean: float = 0.0):
+             emb_mean: float = 0.0,
+             guidance_scale: float = 1.0,
+             training_type: str = "ddpm"):
     """
     Full pipeline: conditioning → diffusion sampling → VAE decode → Griffin-Lim.
 
     step_callback(step, total, spec, waves_or_None) is called every `update_every`
-    diffusion steps and always on the very last step (waves is only provided then).
+    steps and always on the very last step (waves is only provided then).
+    guidance_scale > 1 enables classifier-free guidance.
+    training_type: 'ddpm' uses DDPM scheduler; 'flow_matching' uses Euler ODE (100 steps).
     """
-    # Build conditioning vector (raw, then normalise)
     if hasattr(diff_unet, "station_embedding"):
         cond_vec = create_conditioning_vector(cond_meta, station_locations)
         expected_width = diff_unet.num_continuous + 1
@@ -440,33 +463,63 @@ def generate(diff_unet, ae_model, scheduler, emb_shape,
     else:
         cond_vec = _create_legacy_conditioning_vector(cond_meta)
     cond_norm = normalise_cond(cond_vec).unsqueeze(0).unsqueeze(0).to(DEVICE)
+    null_cond = torch.zeros_like(cond_norm)
 
     x = torch.randn(1, *emb_shape, device=DEVICE)
-    num_steps = int(getattr(scheduler.config, "num_train_timesteps", NUM_TRAIN_TIMESTEPS))
-    scheduler.set_timesteps(num_steps)
     diff_unet.eval()
 
-    timesteps = scheduler.timesteps
-    total     = len(timesteps)
-
-    for i, t in enumerate(timesteps):
-        t_b        = t.unsqueeze(0).to(DEVICE)
+    def _pred(x_, t_):
+        if guidance_scale != 1.0:
+            x_in = torch.cat([x_, x_])
+            t_in = torch.cat([t_, t_])
+            c_in = torch.cat([null_cond, cond_norm])
+            if hasattr(diff_unet, "station_embedding"):
+                preds = diff_unet.forward(x_in, t_in, c_in).sample
+            else:
+                preds = diff_unet(x_in, t_in, encoder_hidden_states=c_in).sample
+            u, c = preds.chunk(2)
+            return u + guidance_scale * (c - u)
         if hasattr(diff_unet, "station_embedding"):
-            noise_pred = diff_unet.forward(x, t_b, cond_norm).sample
-        else:
-            noise_pred = diff_unet(x, t_b, encoder_hidden_states=cond_norm).sample
-        x          = scheduler.step(noise_pred, t, x).prev_sample
+            return diff_unet.forward(x_, t_, cond_norm).sample
+        return diff_unet(x_, t_, encoder_hidden_states=cond_norm).sample
 
-        if step_callback is not None:
-            is_last = (i == total - 1)
-            if i % update_every == 0 or is_last:
-                spec  = _sample_to_spec(ae_model, x, emb_std=emb_std, emb_mean=emb_mean, data_mode=data_mode)
-                waves = (np.stack([griffin_lim_channel(spec[ch], params=griffin_lim_params)
-                                   for ch in range(3)], axis=0)
-                         if is_last else None)
-                step_callback(i + 1, total, spec, waves)
+    if training_type == "flow_matching":
+        num_steps = min(100, NUM_TRAIN_TIMESTEPS)
+        dt = 1.0 / num_steps
+        total = num_steps
+        for i in range(num_steps):
+            t_cont = 1.0 - i * dt
+            t_b = torch.tensor([round(t_cont * NUM_TRAIN_TIMESTEPS)], device=DEVICE).long()
+            x = x - dt * _pred(x, t_b)
 
-    # Also return the final result for non-callback callers
+            if step_callback is not None:
+                is_last = (i == total - 1)
+                if i % update_every == 0 or is_last:
+                    spec  = _sample_to_spec(ae_model, x, emb_std=emb_std, emb_mean=emb_mean, data_mode=data_mode)
+                    waves = (np.stack([griffin_lim_channel(spec[ch], params=griffin_lim_params)
+                                       for ch in range(3)], axis=0)
+                             if is_last else None)
+                    step_callback(i + 1, total, spec, waves)
+    else:
+        num_steps = int(getattr(scheduler.config, "num_train_timesteps", NUM_TRAIN_TIMESTEPS))
+        scheduler.set_timesteps(num_steps)
+        timesteps = scheduler.timesteps
+        total     = len(timesteps)
+
+        for i, t in enumerate(timesteps):
+            t_b = t.unsqueeze(0).to(DEVICE)
+            noise_pred = _pred(x, t_b)
+            x = scheduler.step(noise_pred, t, x).prev_sample
+
+            if step_callback is not None:
+                is_last = (i == total - 1)
+                if i % update_every == 0 or is_last:
+                    spec  = _sample_to_spec(ae_model, x, emb_std=emb_std, emb_mean=emb_mean, data_mode=data_mode)
+                    waves = (np.stack([griffin_lim_channel(spec[ch], params=griffin_lim_params)
+                                       for ch in range(3)], axis=0)
+                             if is_last else None)
+                    step_callback(i + 1, total, spec, waves)
+
     spec  = _sample_to_spec(ae_model, x, emb_std=emb_std, emb_mean=emb_mean, data_mode=data_mode)
     waves = np.stack([griffin_lim_channel(spec[ch], params=griffin_lim_params) for ch in range(3)], axis=0)
     return spec, waves
@@ -487,6 +540,7 @@ class SeismicDemoApp(tk.Tk):
         self._emb_std       = 1.0
         self._emb_mean      = 0.0
         self._data_mode     = "latent"
+        self._training_type = "ddpm"
         self._normalise_cond = lambda v: v
         self._station_locations = {}
         self._train_metadatas   = []
@@ -534,6 +588,18 @@ class SeismicDemoApp(tk.Tk):
         ctrl = ttk.LabelFrame(parent, text="Conditioning Parameters", padding=12)
         ctrl.grid(row=0, column=0, sticky="ns", padx=(0, 12))
 
+        # Model Type dropdown
+        ttk.Label(ctrl, text="Model Type").pack(anchor="w")
+        self._model_type_var = tk.StringVar(value="DDPM")
+        ttk.Combobox(
+            ctrl,
+            textvariable=self._model_type_var,
+            values=["DDPM", "Flow Matching"],
+            state="readonly",
+            width=16,
+        ).pack(fill="x", pady=(2, 12))
+        self._model_type_var.trace_add("write", lambda *_: self.after(0, self._on_model_type_changed))
+
         # Station dropdown
         ttk.Label(ctrl, text="Station").pack(anchor="w")
         self._station_var = tk.StringVar(value="EDC")
@@ -549,11 +615,12 @@ class SeismicDemoApp(tk.Tk):
 
         # Sliders: (label, key, lo, hi, default, fmt)
         sliders = [
-            ("Magnitude",   "mag", 1.0,   5.7,   3.0,  ".1f"),
-            ("Latitude",    "lat", MARMARA_LAT_MIN, MARMARA_LAT_MAX, 40.70, ".3f"),
-            ("Longitude",   "lon", MARMARA_LON_MIN, MARMARA_LON_MAX, 28.00, ".3f"),
-            ("Depth  (km)", "dep", 0.0,   29.7,  10.0,  ".1f"),
-            ("SNR",         "snr", 1.0,   30.0,   5.0,  ".1f"),
+            ("Magnitude",        "mag",      1.0,   5.7,   3.0,  ".1f"),
+            ("Latitude",         "lat", MARMARA_LAT_MIN, MARMARA_LAT_MAX, 40.70, ".3f"),
+            ("Longitude",        "lon", MARMARA_LON_MIN, MARMARA_LON_MAX, 28.00, ".3f"),
+            ("Depth  (km)",      "dep",      0.0,  29.7,  10.0,  ".1f"),
+            ("SNR",              "snr",      1.0,  30.0,   5.0,  ".1f"),
+            ("Guidance Scale",   "cfg",      1.0,  10.0,   3.0,  ".1f"),
         ]
         self._svars = {}
         for label, key, lo, hi, default, fmt in sliders:
@@ -879,9 +946,14 @@ class SeismicDemoApp(tk.Tk):
             self._scheduler = _load_diffusion_scheduler(diff_ckpt)
 
             train_cfg = _read_diffusion_training_config(diff_ckpt)
-            self._data_mode = str(train_cfg.get("data_mode", self._data_mode)).lower()
+            self._data_mode     = str(train_cfg.get("data_mode",     self._data_mode)).lower()
+            self._training_type = str(train_cfg.get("training_type", self._training_type)).lower()
             if self._data_mode not in {"latent", "stft"}:
                 self._data_mode = "latent"
+            if self._training_type not in {"ddpm", "flow_matching"}:
+                self._training_type = "ddpm"
+            _display = "Flow Matching" if self._training_type == "flow_matching" else "DDPM"
+            self.after(0, lambda d=_display: self._model_type_var.set(d))
 
             # ── Data-mode specific setup ──────────────────────────────────────
             if self._data_mode == "latent":
@@ -1055,6 +1127,80 @@ class SeismicDemoApp(tk.Tk):
         except Exception as exc:
             self._set_status(f"Could not load reference data:\n{exc}", RED)
 
+    # ── Model type switching ──────────────────────────────────────────────────
+    def _on_model_type_changed(self):
+        selected = self._model_type_var.get()
+        training_type = "flow_matching" if selected == "Flow Matching" else "ddpm"
+        if training_type == self._training_type:
+            return
+        self._set_status(f"Loading {selected} model…", YELLOW)
+        self.after(0, lambda: self._gen_btn.config(state="disabled"))
+        self.after(0, lambda: self._rand_btn.config(state="disabled"))
+        threading.Thread(
+            target=self._reload_diffusion_model,
+            args=(training_type,),
+            daemon=True,
+        ).start()
+
+    def _reload_diffusion_model(self, training_type: str):
+        try:
+            diff_ckpt, _ = _find_latest_checkpoint_by_type(training_type)
+            if diff_ckpt is None:
+                self._set_status(
+                    f"No {training_type} checkpoint found.\n"
+                    f"Train with: python train.py --training_type {training_type}",
+                    RED,
+                )
+                _restore = "Flow Matching" if self._training_type == "flow_matching" else "DDPM"
+                self.after(0, lambda d=_restore: self._model_type_var.set(d))
+                self.after(0, lambda: self._gen_btn.config(state="normal"))
+                self.after(0, lambda: self._rand_btn.config(state="normal"))
+                return
+
+            self._set_status(f"Loading {training_type} ({diff_ckpt.name})…", YELLOW)
+            station_emb_path = diff_ckpt / "station_embedding.pt"
+            if station_emb_path.exists():
+                self._diff_unet = DiffusionUNet2D.load_pretrained(diff_ckpt).to(DEVICE)
+            else:
+                from diffusers import UNet2DConditionModel
+                self._diff_unet = UNet2DConditionModel.from_pretrained(str(diff_ckpt)).to(DEVICE)
+            self._scheduler = _load_diffusion_scheduler(diff_ckpt)
+
+            train_cfg = _read_diffusion_training_config(diff_ckpt)
+            self._training_type = str(train_cfg.get("training_type", training_type)).lower()
+            new_data_mode = str(train_cfg.get("data_mode", self._data_mode)).lower()
+            if new_data_mode not in {"latent", "stft"}:
+                new_data_mode = self._data_mode
+            if "data_shape" in train_cfg:
+                self._emb_shape = tuple(int(v) for v in train_cfg["data_shape"])
+
+            # Load AE if the new checkpoint needs latent decoding and we don't have one
+            if new_data_mode == "latent" and self._ae_model is None:
+                ae_ckpt = _get_embeddings_source_checkpoint() or _find_latest_timestamped_ae_checkpoint()
+                if ae_ckpt is None:
+                    raise FileNotFoundError(
+                        "No autoencoder checkpoint found.\n"
+                        "Train it first with ML/autoencoder/train.py"
+                    )
+                self._set_status(f"Loading AE ({ae_ckpt.parent.name})…", YELLOW)
+                self._ae_model, _ = _load_ae(str(ae_ckpt), device=DEVICE)
+                self._ae_model.eval()
+            elif new_data_mode == "stft":
+                self._ae_model = None
+
+            self._data_mode = new_data_mode
+            print(f"[demo] Switched to {self._training_type} model: {diff_ckpt.name}")
+            self._set_status(
+                f"{self._model_type_var.get()} model loaded ✓  ({diff_ckpt.name})", GREEN
+            )
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            self._set_status(f"Load error:\n{exc}", RED)
+        finally:
+            self.after(0, lambda: self._gen_btn.config(state="normal"))
+            self.after(0, lambda: self._rand_btn.config(state="normal"))
+
     # ── Generate callback ─────────────────────────────────────────────────────
     def _on_generate(self):
         if self._generating:
@@ -1115,6 +1261,8 @@ class SeismicDemoApp(tk.Tk):
                 griffin_lim_params=gl_params,
                 data_mode=self._data_mode,
                 emb_mean=self._emb_mean,
+                guidance_scale=float(self._svars["cfg"].get()),
+                training_type=self._training_type,
             )
             self._set_status("Done ✓", GREEN)
         except Exception as exc:

@@ -219,6 +219,13 @@ def _load_source_stft_config() -> Dict[str, int]:
 # --- CLI ---
 parser = argparse.ArgumentParser(description="Train diffusion model")
 parser.add_argument(
+    "--training_type",
+    type=str,
+    default="ddpm",
+    choices=["ddpm", "flow_matching"],
+    help="ddpm = standard DDPM training; flow_matching = linear flow matching (velocity target).",
+)
+parser.add_argument(
     "--prediction_target",
     type=str,
     default="epsilon",
@@ -310,8 +317,11 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 PREDICTION_TARGET = "sample" if args.prediction_target == "x0" else args.prediction_target  # HF scheduler name
 STATION_EMB_DIM = 64
 NUM_CONTINUOUS = 6
+CFG_DROPOUT = 0.15       # fraction of samples per batch trained unconditionally
+CFG_GUIDANCE_SCALE = 3.0 # guidance scale used when logging preview images
+TRAINING_TYPE = args.training_type
 
-writer = SummaryWriter(log_dir=f"runs/diffusion_{args.data_mode}")
+writer = SummaryWriter(log_dir=f"runs/diffusion_{args.data_mode}_{TRAINING_TYPE}")
 
 # --- Shared metadata conditioning ---
 metadatas = json.load(open("embeddings/metadata.json", "r"))
@@ -495,6 +505,8 @@ def _log_preview_images(log_step: int, epoch: int):
         num_continuous=NUM_CONTINUOUS,
         data_mean=data_mean,
         data_std=data_std,
+        guidance_scale=CFG_GUIDANCE_SCALE,
+        training_type=TRAINING_TYPE,
     )
     if args.data_mode == "latent":
         vis_real = decode_embedding(gen_real)
@@ -518,6 +530,8 @@ def _log_preview_images(log_step: int, epoch: int):
         num_continuous=NUM_CONTINUOUS,
         data_mean=data_mean,
         data_std=data_std,
+        guidance_scale=CFG_GUIDANCE_SCALE,
+        training_type=TRAINING_TYPE,
     )
     if args.data_mode == "latent":
         vis_rand = decode_embedding(gen_rand)
@@ -528,13 +542,14 @@ def _log_preview_images(log_step: int, epoch: int):
 
 
 def _save_checkpoint(ckpt_name: str):
-    ckpt_path = Path("checkpoints") / ckpt_name
+    ckpt_path = Path("checkpoints") / TRAINING_TYPE / ckpt_name
     ckpt_path.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(str(ckpt_path))
     noise_scheduler.save_pretrained(str(ckpt_path))
     json.dump(
         {
             "data_mode": args.data_mode,
+            "training_type": TRAINING_TYPE,
             "data_shape": [int(data_shape[0]), int(data_shape[1]), int(data_shape[2])],
             "emb_mean": float(data_mean),
             "emb_std": float(data_std),
@@ -550,7 +565,7 @@ def _save_checkpoint(ckpt_name: str):
 
 def _cleanup_checkpoints(pattern: str, keep: int):
     keep = max(1, int(keep))
-    all_ckpts = sorted(Path("checkpoints").glob(pattern), key=lambda p: p.stat().st_mtime)
+    all_ckpts = sorted((Path("checkpoints") / TRAINING_TYPE).glob(pattern), key=lambda p: p.stat().st_mtime)
     for old in all_ckpts[:-keep]:
         shutil.rmtree(old)
 
@@ -566,33 +581,39 @@ for epoch in range(NUM_EPOCHS):
         batch_data = batch_data.to(DEVICE)
         batch_cond = batch_cond.to(DEVICE)
 
+        # CFG: randomly zero-out each sample's conditioning independently
+        if CFG_DROPOUT > 0:
+            drop = torch.rand(batch_data.shape[0], 1, device=DEVICE) < CFG_DROPOUT
+            batch_cond = batch_cond.masked_fill(drop, 0.0)
+
         step_lr = _lr_for_step(global_step)
         for pg in optimizer.param_groups:
             pg["lr"] = step_lr
 
         noise = torch.randn_like(batch_data)
-        timesteps = torch.randint(
-            0,
-            noise_scheduler.config.num_train_timesteps,
-            (batch_data.shape[0],),
-            device=DEVICE,
-        ).long()
-
-        noisy_data = noise_scheduler.add_noise(batch_data, noise, timesteps)
+        if TRAINING_TYPE == "flow_matching":
+            t_cont = torch.rand(batch_data.shape[0], device=DEVICE)
+            timesteps = (t_cont * NUM_TRAIN_TIMESTEPS).long().clamp(0, NUM_TRAIN_TIMESTEPS - 1)
+            noisy_data = (1 - t_cont[:, None, None, None]) * batch_data + t_cont[:, None, None, None] * noise
+            target = noise - batch_data
+        else:
+            timesteps = torch.randint(
+                0, noise_scheduler.config.num_train_timesteps, (batch_data.shape[0],), device=DEVICE,
+            ).long()
+            noisy_data = noise_scheduler.add_noise(batch_data, noise, timesteps)
+            if args.prediction_target == "epsilon":
+                target = noise
+            elif args.prediction_target == "x0":
+                target = batch_data
+            elif args.prediction_target == "v_prediction":
+                target = noise_scheduler.get_velocity(batch_data, noise, timesteps)
+            else:
+                raise ValueError(f"Unsupported prediction_target: {args.prediction_target}")
 
         # Metadata conditioning for cross-attention.
         cond = batch_cond.unsqueeze(1)
 
         model_pred = model.forward(noisy_data, timesteps, cond).sample
-
-        if args.prediction_target == "epsilon":
-            target = noise
-        elif args.prediction_target == "x0":
-            target = batch_data
-        elif args.prediction_target == "v_prediction":
-            target = noise_scheduler.get_velocity(batch_data, noise, timesteps)
-        else:
-            raise ValueError(f"Unsupported prediction_target: {args.prediction_target}")
 
         loss = torch.nn.functional.mse_loss(model_pred, target)
 
@@ -624,6 +645,6 @@ for epoch in range(NUM_EPOCHS):
 
 # --- Save model ---
 writer.close()
-model.save_pretrained("checkpoints/unet2d")
-noise_scheduler.save_pretrained("checkpoints/unet2d")
-print("Model saved to checkpoints/unet2d")
+model.save_pretrained(f"checkpoints/{TRAINING_TYPE}/unet2d")
+noise_scheduler.save_pretrained(f"checkpoints/{TRAINING_TYPE}/unet2d")
+print(f"Model saved to checkpoints/{TRAINING_TYPE}/unet2d")

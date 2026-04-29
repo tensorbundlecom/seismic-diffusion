@@ -50,6 +50,18 @@ def normalise_cond(
     out[:n] = (out[:n] - cond_mean[:n]) / cond_std[:n]
     return out
 
+def _cfg_pred(model, x, t_batch, cond, null_cond, guidance_scale):
+    """Single denoising step with optional classifier-free guidance."""
+    if guidance_scale != 1.0:
+        x_in  = torch.cat([x, x])
+        t_in  = torch.cat([t_batch, t_batch])
+        c_in  = torch.cat([null_cond, cond])
+        preds = model.forward(x_in, t_in, c_in).sample
+        uncond, cond_pred = preds.chunk(2)
+        return uncond + guidance_scale * (cond_pred - uncond)
+    return model.forward(x, t_batch, cond).sample
+
+
 @torch.no_grad()
 def generate(
     cond_vec,
@@ -63,9 +75,13 @@ def generate(
     num_continuous=None,
     data_mean=None,
     data_std=None,
+    guidance_scale=1.0,
+    training_type="ddpm",
 ):
     """Run the full reverse diffusion loop given a conditioning vector (1, cond_dim).
     cond_vec should be the *raw* (un-normalised) output of create_conditioning_vector.
+    guidance_scale > 1 enables classifier-free guidance (requires CFG_DROPOUT > 0 during training).
+    training_type: 'ddpm' uses the DDPM scheduler; 'flow_matching' uses a simple Euler ODE.
     """
     model.eval()
     x = torch.randn(1, *embedding_shape, device=device)
@@ -75,15 +91,27 @@ def generate(
         cond_std=cond_std,
         num_continuous=num_continuous,
     ).unsqueeze(0).unsqueeze(0).to(device)  # (1, 1, cond_dim)
-    scheduler.set_timesteps(num_train_timesteps)
-    for t in scheduler.timesteps:
-        t_batch = t.unsqueeze(0).to(device)
-        noise_pred = model.forward(x, t_batch, cond).sample
-        if not torch.isfinite(noise_pred).all():
-            raise RuntimeError(f"Non-finite noise prediction encountered at timestep {int(t.item())}.")
-        x = scheduler.step(noise_pred, t, x).prev_sample
-        if not torch.isfinite(x).all():
-            raise RuntimeError(f"Non-finite latent encountered after scheduler step at timestep {int(t.item())}.")
+    null_cond = torch.zeros_like(cond)
+
+    if training_type == "flow_matching":
+        # Euler integration from t=1 (noise) to t=0 (data); 100 steps is enough
+        num_steps = min(100, num_train_timesteps)
+        dt = 1.0 / num_steps
+        for i in range(num_steps):
+            t_cont  = 1.0 - i * dt
+            t_batch = torch.tensor([round(t_cont * num_train_timesteps)], device=device).long()
+            v_pred  = _cfg_pred(model, x, t_batch, cond, null_cond, guidance_scale)
+            x = x - dt * v_pred
+    else:
+        scheduler.set_timesteps(num_train_timesteps)
+        for t in scheduler.timesteps:
+            t_batch    = t.unsqueeze(0).to(device)
+            noise_pred = _cfg_pred(model, x, t_batch, cond, null_cond, guidance_scale)
+            if not torch.isfinite(noise_pred).all():
+                raise RuntimeError(f"Non-finite noise prediction at timestep {int(t.item())}.")
+            x = scheduler.step(noise_pred, t, x).prev_sample
+            if not torch.isfinite(x).all():
+                raise RuntimeError(f"Non-finite latent after scheduler step at timestep {int(t.item())}.")
     if data_mean is None:
         data_mean = EMB_MEAN
     if data_std is None:
