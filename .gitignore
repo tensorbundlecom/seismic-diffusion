@@ -9,6 +9,8 @@ checkpoints_cvae
 logs_cvae
 AGENTS.md
 .codex
+run_*.sh
+start_*.sh
 logs/
 ML/autoencoder/experiments/**/visualizations/**/waveforms/
 ML/autoencoder/experiments/**/visualizations/**/specs/fas/
