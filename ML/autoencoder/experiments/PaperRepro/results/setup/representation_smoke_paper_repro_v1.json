@@ -1,0 +1,162 @@
+{
+  "count": 8,
+  "representation_batch_shape": [
+    8,
+    3,
+    128,
+    128
+  ],
+  "representation_global_max": 1.7797691822052002,
+  "representation_global_min": -1.0,
+  "samples": [
+    {
+      "event_id": "20140101214024",
+      "representation_max": 1.7447583675384521,
+      "representation_min": -0.1667535901069641,
+      "representation_shape": [
+        3,
+        128,
+        128
+      ],
+      "requires_left_pad": false,
+      "requires_right_pad": false,
+      "split": "train",
+      "station_code": "EDC",
+      "waveform_shape": [
+        3,
+        4064
+      ]
+    },
+    {
+      "event_id": "20140101214024",
+      "representation_max": 1.7797691822052002,
+      "representation_min": -0.3058529496192932,
+      "representation_shape": [
+        3,
+        128,
+        128
+      ],
+      "requires_left_pad": false,
+      "requires_right_pad": false,
+      "split": "train",
+      "station_code": "KRBG",
+      "waveform_shape": [
+        3,
+        4064
+      ]
+    },
+    {
+      "event_id": "20140101214024",
+      "representation_max": 1.617995023727417,
+      "representation_min": -0.4190085530281067,
+      "representation_shape": [
+        3,
+        128,
+        128
+      ],
+      "requires_left_pad": false,
+      "requires_right_pad": false,
+      "split": "train",
+      "station_code": "MRMT",
+      "waveform_shape": [
+        3,
+        4064
+      ]
+    },
+    {
+      "event_id": "20140101214024",
+      "representation_max": 1.5383579730987549,
+      "representation_min": -0.2950829267501831,
+      "representation_shape": [
+        3,
+        128,
+        128
+      ],
+      "requires_left_pad": false,
+      "requires_right_pad": false,
+      "split": "train",
+      "station_code": "RKY",
+      "waveform_shape": [
+        3,
+        4064
+      ]
+    },
+    {
+      "event_id": "20140101214024",
+      "representation_max": 1.6346204280853271,
+      "representation_min": -1.0,
+      "representation_shape": [
+        3,
+        128,
+        128
+      ],
+      "requires_left_pad": true,
+      "requires_right_pad": false,
+      "split": "train",
+      "station_code": "SLVT",
+      "waveform_shape": [
+        3,
+        4064
+      ]
+    },
+    {
+      "event_id": "20140103003255",
+      "representation_max": 1.7603471279144287,
+      "representation_min": -0.3097207546234131,
+      "representation_shape": [
+        3,
+        128,
+        128
+      ],
+      "requires_left_pad": false,
+      "requires_right_pad": false,
+      "split": "train",
+      "station_code": "EDC",
+      "waveform_shape": [
+        3,
+        4064
+      ]
+    },
+    {
+      "event_id": "20140103003255",
+      "representation_max": 1.5211608409881592,
+      "representation_min": -1.0,
+      "representation_shape": [
+        3,
+        128,
+        128
+      ],
+      "requires_left_pad": true,
+      "requires_right_pad": false,
+      "split": "train",
+      "station_code": "KCTX",
+      "waveform_shape": [
+        3,
+        4064
+      ]
+    },
+    {
+      "event_id": "20140103003255",
+      "representation_max": 1.7064473628997803,
+      "representation_min": -0.3633822798728943,
+      "representation_shape": [
+        3,
+        128,
+        128
+      ],
+      "requires_left_pad": false,
+      "requires_right_pad": false,
+      "split": "train",
+      "station_code": "KRBG",
+      "waveform_shape": [
+        3,
+        4064
+      ]
+    }
+  ],
+  "waveform_batch_shape": [
+    8,
+    3,
+    4064
+  ]
+}

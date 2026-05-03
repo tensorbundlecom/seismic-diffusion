@@ -1,0 +1,193 @@
+{
+  "splits": {
+    "ood": {
+      "dataset_len": 8988,
+      "examples": [
+        {
+          "event_id": "20140106082338",
+          "index": 0,
+          "max": 2.1013312339782715,
+          "min": -1.0,
+          "requires_left_pad": true,
+          "requires_right_pad": false,
+          "shape": [
+            3,
+            128,
+            128
+          ],
+          "station_code": "ERIK"
+        },
+        {
+          "event_id": "20140106082338",
+          "index": 1,
+          "max": 2.2743782997131348,
+          "min": -0.4515334367752075,
+          "requires_left_pad": false,
+          "requires_right_pad": false,
+          "shape": [
+            3,
+            128,
+            128
+          ],
+          "station_code": "EZN"
+        },
+        {
+          "event_id": "20140106082338",
+          "index": 2,
+          "max": 2.043473958969116,
+          "min": -1.0,
+          "requires_left_pad": true,
+          "requires_right_pad": false,
+          "shape": [
+            3,
+            128,
+            128
+          ],
+          "station_code": "GELI"
+        }
+      ]
+    },
+    "test": {
+      "dataset_len": 7895,
+      "examples": [
+        {
+          "event_id": "20140104201213",
+          "index": 0,
+          "max": 1.622852087020874,
+          "min": -0.31798624992370605,
+          "requires_left_pad": false,
+          "requires_right_pad": false,
+          "shape": [
+            3,
+            128,
+            128
+          ],
+          "station_code": "HRTX"
+        },
+        {
+          "event_id": "20140104201213",
+          "index": 1,
+          "max": 1.630431890487671,
+          "min": -0.18016880750656128,
+          "requires_left_pad": false,
+          "requires_right_pad": false,
+          "shape": [
+            3,
+            128,
+            128
+          ],
+          "station_code": "ISK"
+        },
+        {
+          "event_id": "20140104201213",
+          "index": 2,
+          "max": 1.781412124633789,
+          "min": -0.110767662525177,
+          "requires_left_pad": false,
+          "requires_right_pad": false,
+          "shape": [
+            3,
+            128,
+            128
+          ],
+          "station_code": "KAVV"
+        }
+      ]
+    },
+    "train": {
+      "dataset_len": 64149,
+      "examples": [
+        {
+          "event_id": "20140101214024",
+          "index": 0,
+          "max": 1.7447583675384521,
+          "min": -0.1667535901069641,
+          "requires_left_pad": false,
+          "requires_right_pad": false,
+          "shape": [
+            3,
+            128,
+            128
+          ],
+          "station_code": "EDC"
+        },
+        {
+          "event_id": "20140101214024",
+          "index": 1,
+          "max": 1.7797691822052002,
+          "min": -0.3058529496192932,
+          "requires_left_pad": false,
+          "requires_right_pad": false,
+          "shape": [
+            3,
+            128,
+            128
+          ],
+          "station_code": "KRBG"
+        },
+        {
+          "event_id": "20140101214024",
+          "index": 2,
+          "max": 1.617995023727417,
+          "min": -0.4190085530281067,
+          "requires_left_pad": false,
+          "requires_right_pad": false,
+          "shape": [
+            3,
+            128,
+            128
+          ],
+          "station_code": "MRMT"
+        }
+      ]
+    },
+    "validation": {
+      "dataset_len": 7887,
+      "examples": [
+        {
+          "event_id": "20140107161547",
+          "index": 0,
+          "max": 1.7286322116851807,
+          "min": -1.0,
+          "requires_left_pad": true,
+          "requires_right_pad": false,
+          "shape": [
+            3,
+            128,
+            128
+          ],
+          "station_code": "ERIK"
+        },
+        {
+          "event_id": "20140107161547",
+          "index": 1,
+          "max": 1.9509613513946533,
+          "min": -0.21746927499771118,
+          "requires_left_pad": false,
+          "requires_right_pad": false,
+          "shape": [
+            3,
+            128,
+            128
+          ],
+          "station_code": "EZN"
+        },
+        {
+          "event_id": "20140107161547",
+          "index": 2,
+          "max": 1.6793978214263916,
+          "min": -1.0,
+          "requires_left_pad": true,
+          "requires_right_pad": false,
+          "shape": [
+            3,
+            128,
+            128
+          ],
+          "station_code": "GELI"
+        }
+      ]
+    }
+  },
+  "version": "paper_repro_v1"
+}

@@ -1,0 +1,42 @@
+{
+  "passthrough_features": [
+    "azimuth_sin",
+    "azimuth_cos"
+  ],
+  "split_seed": 42,
+  "stats": {
+    "azimuthal_gap_deg": {
+      "mean": 80.66513897332773,
+      "std": 41.40399899005137
+    },
+    "depth_km": {
+      "mean": 9.899814494380271,
+      "std": 4.360741790247072
+    },
+    "dtPS_ref_s": {
+      "mean": 7.911961373563481,
+      "std": 3.5173472374735293
+    },
+    "hypocentral_distance_km": {
+      "mean": 65.43722884225313,
+      "std": 28.891412839469602
+    },
+    "magnitude": {
+      "mean": 2.0491059876225663,
+      "std": 0.5578856151076426
+    },
+    "tP_ref_s": {
+      "mean": 10.676555401632552,
+      "std": 4.733770714055812
+    }
+  },
+  "train_sample_count": 64149,
+  "zscore_features": [
+    "magnitude",
+    "depth_km",
+    "hypocentral_distance_km",
+    "azimuthal_gap_deg",
+    "tP_ref_s",
+    "dtPS_ref_s"
+  ]
+}

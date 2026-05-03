@@ -1,0 +1,21 @@
+{
+  "allow_padding": true,
+  "full_coverage_count": 35057,
+  "issue_counts": {
+    "missing_phase": 2
+  },
+  "left_padding_count": 53862,
+  "limit": 0,
+  "missing_catalog_count": 0,
+  "missing_gap_count": 0,
+  "missing_phase_count": 2,
+  "padding_needed_count": 53862,
+  "right_padding_count": 0,
+  "sample_rate_hz": 100.0,
+  "strict_full_coverage_required": false,
+  "target_duration_s": 40.64,
+  "total_waveform_files_considered": 88921,
+  "usable_sample_count": 88919,
+  "version": "paper_repro_v1",
+  "waveform_family": "HH"
+}

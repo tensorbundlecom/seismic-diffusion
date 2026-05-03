@@ -1,0 +1,17 @@
+{
+  "split_event_counts": {
+    "ood": 1272,
+    "test": 1146,
+    "train": 9159,
+    "validation": 1144
+  },
+  "split_sample_counts": {
+    "ood": 8988,
+    "test": 7895,
+    "train": 64149,
+    "validation": 7887
+  },
+  "split_seed": 42,
+  "usable_sample_count": 88919,
+  "version": "paper_repro_v1"
+}

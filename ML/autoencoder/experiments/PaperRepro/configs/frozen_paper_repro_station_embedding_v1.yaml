@@ -1,0 +1,233 @@
+version: paper_repro_station_embedding_v1
+
+paths:
+  source_repo_root: /home/gms/kalem_seismic
+  data_root: /home/gms/kalem_seismic/data/external_dataset/extracted/data
+  filtered_waveform_root: /home/gms/kalem_seismic/data/external_dataset/extracted/data/filtered_waveforms
+  event_catalog: /home/gms/kalem_seismic/data/external_dataset/extracted/data/events/20140101_20251101_0.0_9.0_9_339.txt
+  phase_pick_root: /home/gms/kalem_seismic/data/external_dataset/extracted/data/phase_picks
+
+data:
+  source_name: external_dataset
+  waveform_family: HH
+  sample_unit: event_station_window
+  components: [E, N, Z]
+  sample_rate_hz: 100
+  counts_domain: true
+  response_removal: false
+  window:
+    reference: origin_time
+    pre_origin_sec: 0.0
+    num_samples: 4064
+    allow_padding: true
+    padding_value: 0.0
+    strict_full_coverage_required: false
+
+representation:
+  type: magnitude_only_log_spectrogram
+  shape: [3, 128, 128]
+  n_fft: 256
+  hop_length: 32
+  window: hann
+  drop_nyquist: true
+  inverse:
+    method: griffin_lim
+    n_iter: 128
+  normalization:
+    type: fixed_log_scale
+    clip_min: 1.0e-8
+    log_max: 3.0
+    output_range: [-1.0, 1.0]
+    hard_clip_output: false
+
+conditions:
+  magnitude_type: ML
+  scalar_features:
+    - magnitude
+    - depth_km
+    - hypocentral_distance_km
+    - azimuth_sin
+    - azimuth_cos
+    - azimuthal_gap_deg
+    - tP_ref_s
+    - dtPS_ref_s
+  normalization:
+    zscore:
+      - magnitude
+      - depth_km
+      - hypocentral_distance_km
+      - azimuthal_gap_deg
+      - tP_ref_s
+      - dtPS_ref_s
+    passthrough:
+      - azimuth_sin
+      - azimuth_cos
+  excluded:
+    - VS30
+    - station_elevation
+    - station_embedding
+  velocity_model_1d:
+    depth_unit: m
+    velocity_unit: m/s
+    Depths: [-32000, -25000, -22000, -20000, -15000, -14000, -12000, -10000, -8000, -6000, -5000, -4000, -3000, -2000, -1000, 0]
+    Vp: [8000, 6700, 6500, 6400, 6300, 6250, 6200, 6150, 6100, 6050, 5950, 5900, 5800, 5700, 5600, 3000]
+    Vs: [4650, 3850, 3780, 3660, 3630, 3610, 3590, 3560, 3480, 3440, 3420, 3410, 3260, 3210, 3150, 1900]
+
+split:
+  kind: event_wise
+  ratios:
+    train: 0.8
+    validation: 0.1
+    test: 0.1
+  ood_kind: event_heldout
+  ood_ratio: 0.1
+  split_seed: 42
+
+stage1:
+  model_family: residual_conv_2d_vae
+  conditional: false
+  latent_shape: [8, 32, 32]
+  encoder_decoder:
+    dims: 2
+    model_channels: 64
+    channel_mult: [1, 2, 4]
+    num_res_blocks: 2
+    conv_kernel_size: 3
+    dropout: 0.1
+    attention: false
+  objective:
+    reconstruction: mse
+    kl_weight: 1.0e-6
+    kl_schedule: none
+  checkpoint_monitor: validation/reconstruction_loss
+  training:
+    seed: 42
+    epochs: 200
+    batch_size: 64
+    num_workers: 16
+    learning_rate: 1.0e-4
+    weight_decay: 1.0e-4
+    eta_min: 0.0
+    save_top_k: 1
+    sampler:
+      kind: soft_magnitude_weighted
+      magnitude_bin_edges: [0.0, 2.0, 3.0, 4.0, 5.0, 10.0]
+      exponent: 0.5
+
+stage2:
+  model_family: latent_edm_2d_unet
+  latent_input_shape: [8, 32, 32]
+  conditioning:
+    scalar_path: mlp_plus_time_embedding
+    cond_emb_scale: null
+    use_scale_shift_norm: false
+    spatial_concat: false
+    station_embedding:
+      enabled: true
+      embedding_dim: 32
+  unet:
+    dims: 2
+    in_channels: 8
+    out_channels: 8
+    model_channels: 128
+    channel_mult: [1, 2, 4, 4]
+    num_res_blocks: 2
+    attention_resolutions: [8]
+    num_heads: 4
+    conv_kernel_size: 3
+    dropout: 0.1
+    flash_attention: false
+    use_causal_mask: false
+  objective:
+    type: edm_weighted_denoising
+    target: clean_latent
+  edm:
+    sigma_min: 0.002
+    sigma_max: 80.0
+    rho: 7.0
+    sigma_data: 0.5
+    P_mean: -1.2
+    P_std: 1.2
+    S_churn: 40.0
+    S_min: 0.05
+    S_max: 50.0
+    S_noise: 1.003
+  sampling:
+    method: deterministic_heun
+    num_steps: 25
+  training:
+    seed: 42
+    epochs: 200
+    batch_size: 64
+    num_workers: 8
+    learning_rate: 1.0e-4
+    weight_decay: 0.0
+    eta_min: 0.0
+    save_top_k: 1
+
+evaluation:
+  reporting:
+    magnitude_bin_edges: [0.0, 2.0, 3.0, 4.0, 6.0]
+    distance_bin_edges: [0.0, 20.0, 40.0, 60.0, 80.0, 140.0]
+  stage1_primary:
+    - validation/reconstruction_loss
+    - spec_corr
+    - lsd
+  stage1_secondary:
+    - mr_lsd
+    - waveform_mse
+    - waveform_asd
+    - oracle_inversion_ceiling
+  stage2_primary:
+    - spec_corr
+    - lsd
+    - mr_lsd
+    - envelope_similarity
+    - fourier_amplitude_fd
+  paper_style_minimum:
+    - fourier_amplitude_fd
+    - classifier_accuracy
+    - classifier_embedding_fd
+  classifier:
+    model_family: residual_conv_2d_classifier
+    dims: 2
+    in_channels: 3
+    model_channels: 64
+    out_channels: 256
+    channel_mult: [1, 2, 4, 4]
+    num_res_blocks: 2
+    conv_kernel_size: 3
+    dropout: 0.1
+    embedding_dim: 256
+    training:
+      seed: 42
+      epochs: 120
+      batch_size: 128
+      num_workers: 16
+      learning_rate: 1.0e-4
+      weight_decay: 0.0
+      eta_min: 0.0
+      save_top_k: 1
+    checkpoint_monitor: validation/accuracy
+
+operations:
+  artifacts:
+    condition_manifest_jsonl: results/setup/condition_manifest_paper_repro_v1.jsonl
+    condition_manifest_meta_json: results/setup/condition_manifest_paper_repro_v1.meta.json
+    condition_manifest_md: results/setup/condition_manifest_paper_repro_v1.md
+    event_split_json: results/setup/event_splits_paper_repro_v1.json
+    event_split_md: results/setup/event_splits_paper_repro_v1.md
+    sample_manifest_jsonl: results/setup/sample_manifest_paper_repro_v1.jsonl
+    sample_manifest_meta_json: results/setup/sample_manifest_paper_repro_v1.meta.json
+    condition_norm_stats_json: results/setup/condition_norm_stats_paper_repro_v1.json
+  run_name_templates:
+    stage1: run_YYYYMMDD_HHMM_s1_ae_<tag>
+    stage2: run_YYYYMMDD_HHMM_s2_ledm_<tag>
+  run_tag_fields:
+    - hh100
+    - ori4064
+    - logspec128
+    - lat8x32x32
+    - evt801010
+    - s42
+    - version

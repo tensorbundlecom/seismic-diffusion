@@ -8,6 +8,7 @@ ML/autoencoder/logs/
 checkpoints_cvae
 logs_cvae
 AGENTS.md
+.codex
 logs/
 ML/autoencoder/experiments/**/visualizations/**/waveforms/
 ML/autoencoder/experiments/**/visualizations/**/specs/fas/
@@ -28,3 +29,18 @@ ML/autoencoder/experiments/LatentShapeVAE/results/lsv_*/
 # experiments2 generated artifacts
 ML/autoencoder/experiments2/runs/exp001/run_*/
 2410.19343v2.pdf
+Seismic-wave-generation-Diffusion.pdf
+
+# PaperRepro generated artifacts
+ML/autoencoder/experiments/PaperRepro/runs/run_*/
+ML/autoencoder/experiments/PaperRepro/runs/nohup_logs/
+ML/autoencoder/experiments/PaperRepro/results/benchmark_generation/
+ML/autoencoder/experiments/PaperRepro/results/benchmark_reference_v1/
+ML/autoencoder/experiments/PaperRepro/results/setup/*.jsonl
+ML/autoencoder/experiments/PaperRepro/results/setup/*.npz
+ML/autoencoder/experiments/PaperRepro/results/stage1_eval*/
+ML/autoencoder/experiments/PaperRepro/results/stage2_cache*/
+ML/autoencoder/experiments/PaperRepro/results/stage2_eval*/
+ML/autoencoder/experiments/PaperRepro/**/*.ckpt
+ML/autoencoder/experiments/PaperRepro/**/*.pt
+ML/autoencoder/experiments/PaperRepro/**/__pycache__/
