@@ -22,7 +22,7 @@ def load_model(checkpoint_path, device='cuda', model_type=VariationalAutoencoder
     
     # Create model
     if model_type == VariationalAutoencoder:
-        latent_channels = config.get('latent_channels', 128)
+        latent_channels = config.get('latent_channels', config.get('latent_dim', 128))
         model = model_type(in_channels=3, latent_channels=latent_channels)
     
     model.load_state_dict(checkpoint['model_state_dict'])

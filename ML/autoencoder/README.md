@@ -42,6 +42,12 @@ python train.py --channels HH HN EH --batch_size 32 --num_epochs 100
 python train.py --nperseg 512 --noverlap 384 --nfft 512
 ```
 
+With PhaseNet perceptual loss:
+
+```bash
+python train.py --nperseg 512 --noverlap 384 --nfft 512 --use_phasenet_perceptual --phasenet_weight 0.05 --phasenet_pretrained stead
+```
+
 ### 4. Resume Training
 
 ```bash
@@ -119,6 +125,11 @@ python train.py --channels HH HN EH BH --batch_size 64 --num_epochs 100 --lr 1e-
 ### High-Resolution STFT
 ```bash
 python train.py --nperseg 512 --noverlap 384 --nfft 512 --batch_size 8
+```
+
+### High-Resolution STFT + PhaseNet
+```bash
+python train.py --nperseg 512 --noverlap 384 --nfft 512 --batch_size 8 --use_phasenet_perceptual --phasenet_weight 0.05 --phasenet_pretrained stead
 ```
 
 ## Model Architecture
