@@ -30,10 +30,12 @@ ROOT = Path(__file__).resolve().parent.parent
 ML   = ROOT / "ML"
 DIFF = ML / "diffusion"
 AE   = ML / "autoencoder"
+AMP  = ML / "amplitude"
 sys.path.insert(0, str(ROOT))
 
 from ML.diffusion.model import DiffusionUNet2D, create_conditioning_vector
 from ML.autoencoder.inference import load_model as _load_ae
+from ML.amplitude.model import AmplitudeMLP
 from diffusers import DDPMScheduler
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -127,6 +129,38 @@ def _find_latest_timestamped_ae_checkpoint():
         if timestamp_pat.match(p.parent.name)
     )
     return ckpts[-1] if ckpts else None
+
+
+def _find_amplitude_checkpoint():
+    """Return the best available amplitude checkpoint path, or None."""
+    ckpt_dir = AMP / "checkpoints"
+    primary = ckpt_dir / "amplitude_mlp.pt"
+    if primary.exists():
+        return primary
+    epoch_ckpts = sorted(ckpt_dir.glob("amplitude_mlp_epoch*.pt"))
+    return epoch_ckpts[-1] if epoch_ckpts else None
+
+
+def _load_amplitude_model(device: str = "cpu"):
+    """
+    Load AmplitudeMLP and its log-std normalization stats.
+    Returns (model, log_std_mean, log_std_scale) or (None, None, None) if not found.
+    """
+    ckpt = _find_amplitude_checkpoint()
+    stats_path = AMP / "checkpoints" / "amp_stats.json"
+    if ckpt is None:
+        return None, None, None
+    try:
+        amp_model = AmplitudeMLP.load(str(ckpt), device=device)
+        amp_model.eval()
+        stats = json.load(open(stats_path)) if stats_path.exists() else {}
+        log_std_mean = torch.tensor(stats.get("log_std_mean", [0.0, 0.0, 0.0]), dtype=torch.float32)
+        log_std_scale = torch.tensor(stats.get("log_std_scale", [1.0, 1.0, 1.0]), dtype=torch.float32)
+        print(f"[demo] Loaded amplitude model from {ckpt.relative_to(ROOT)}")
+        return amp_model, log_std_mean, log_std_scale
+    except Exception as exc:
+        print(f"[demo] Could not load amplitude model: {exc}")
+        return None, None, None
 
 
 def _make_normalise_cond(scale: dict):
@@ -544,6 +578,9 @@ class SeismicDemoApp(tk.Tk):
         self._normalise_cond = lambda v: v
         self._station_locations = {}
         self._train_metadatas   = []
+        self._amp_model      = None
+        self._amp_log_std_mean  = None
+        self._amp_log_std_scale = None
         self._generating    = False
         self._latest_spec   = None
         self._latest_title  = ""
@@ -661,9 +698,9 @@ class SeismicDemoApp(tk.Tk):
 
         self._gl_vars = {
             "n_iter": tk.IntVar(value=900),
-            "momentum": tk.DoubleVar(value=0.9),
-            "inv_log_gain": tk.DoubleVar(value=3.0),
-            "hop_length": tk.IntVar(value=32),
+            "momentum": tk.DoubleVar(value=0.95),
+            "inv_log_gain": tk.DoubleVar(value=2.0),
+            "hop_length": tk.IntVar(value=64),
             "win_length": tk.IntVar(value=1024),
             "n_fft": tk.IntVar(value=1024),
             "window": tk.StringVar(value="bartlett"),
@@ -1028,6 +1065,10 @@ class SeismicDemoApp(tk.Tk):
                 f"sample_shape={self._emb_shape}, emb_mean={self._emb_mean:.5f}, emb_std={self._emb_std:.5f}"
             )
 
+            self._amp_model, self._amp_log_std_mean, self._amp_log_std_scale = (
+                _load_amplitude_model(device=DEVICE)
+            )
+
             self._set_status("Models ready ✓", GREEN)
             self.after(0, lambda: self._gen_btn.config(state="normal"))
             self.after(0, lambda: self._rand_btn.config(state="normal"))
@@ -1251,7 +1292,7 @@ class SeismicDemoApp(tk.Tk):
                 self.after(0, lambda s=spec, w=waves, title=suptitle:
                            self._live_update(s, w, title))
 
-            generate(
+            spec, waves = generate(
                 self._diff_unet, self._ae_model, self._scheduler,
                 self._emb_shape, self._normalise_cond, self._emb_std,
                 self._station_locations,
@@ -1264,6 +1305,23 @@ class SeismicDemoApp(tk.Tk):
                 guidance_scale=float(self._svars["cfg"].get()),
                 training_type=self._training_type,
             )
+
+            if self._amp_model is not None:
+                cond_vec = create_conditioning_vector(cond_meta, self._station_locations)
+                cond_norm = self._normalise_cond(cond_vec).unsqueeze(0).to(DEVICE)
+                with torch.no_grad():
+                    raw_pred = self._amp_model(cond_norm).squeeze(0).cpu()
+                amp_scales = torch.exp(
+                    raw_pred * self._amp_log_std_scale + self._amp_log_std_mean
+                ).numpy()
+                for ch in range(3):
+                    ch_std = float(np.std(waves[ch]))
+                    if ch_std > 1e-10:
+                        waves[ch] /= ch_std
+                    waves[ch] *= float(amp_scales[ch])
+                print(f"[demo] Amplitude scaling applied: E={amp_scales[0]:.4g}  N={amp_scales[1]:.4g}  Z={amp_scales[2]:.4g}")
+                self.after(0, lambda w=waves, title=suptitle: self._live_update(spec, w, title))
+
             self._set_status("Done ✓", GREEN)
         except Exception as exc:
             import traceback
