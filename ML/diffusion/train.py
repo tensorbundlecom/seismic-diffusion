@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
-from torch.utils.data import TensorDataset, DataLoader, Dataset
+from torch.utils.data import TensorDataset, DataLoader, Dataset, Subset
 from diffusers import DDPMScheduler
 from torch.optim import AdamW
 from torch.utils.tensorboard import SummaryWriter
@@ -157,15 +157,22 @@ class STFTDataWithMetadataConditionDataset(Dataset):
 
         return stft
 
-    def estimate_stats(self, num_samples: int = 2048):
+    def estimate_stats(self, num_samples: int = 2048, indices: List[int] = None):
         n = len(self)
         if n == 0:
             raise RuntimeError("Empty STFT dataset")
 
-        if num_samples <= 0 or num_samples >= n:
-            indices = list(range(n))
+        # Restrict statistics to the provided indices (e.g. train split only) to
+        # avoid leaking validation data into the normalization constants.
+        pool = list(indices) if indices is not None else list(range(n))
+        if len(pool) == 0:
+            raise RuntimeError("estimate_stats received an empty index pool")
+
+        if num_samples <= 0 or num_samples >= len(pool):
+            indices = pool
         else:
-            indices = np.linspace(0, n - 1, num=num_samples, dtype=int).tolist()
+            picks = np.linspace(0, len(pool) - 1, num=num_samples, dtype=int).tolist()
+            indices = [pool[i] for i in picks]
 
         total_sum = 0.0
         total_sq = 0.0
@@ -253,6 +260,24 @@ parser.add_argument(
     help="DataLoader workers (mainly relevant for --data_mode stft).",
 )
 parser.add_argument(
+    "--val_fraction",
+    type=float,
+    default=0.1,
+    help="Fraction of the dataset held out for validation. Set <=0 to disable the split.",
+)
+parser.add_argument(
+    "--split_seed",
+    type=int,
+    default=42,
+    help="Seed for the train/val split (also seeds the validation noise for comparable loss).",
+)
+parser.add_argument(
+    "--val_every_n_epochs",
+    type=int,
+    default=1,
+    help="Run a validation pass every N epochs. Set <=0 to disable validation logging.",
+)
+parser.add_argument(
     "--stft_stats_samples",
     type=int,
     default=2048,
@@ -320,6 +345,7 @@ NUM_CONTINUOUS = 6
 CFG_DROPOUT = 0.15       # fraction of samples per batch trained unconditionally
 CFG_GUIDANCE_SCALE = 3.0 # guidance scale used when logging preview images
 TRAINING_TYPE = args.training_type
+VAL_EVERY_N_EPOCHS = int(args.val_every_n_epochs)
 
 writer = SummaryWriter(log_dir=f"runs/diffusion_{args.data_mode}_{TRAINING_TYPE}")
 
@@ -338,7 +364,26 @@ cond_std = raw_cond_vectors[:, :NUM_CONTINUOUS].std(dim=0).clamp(min=1e-8)
 cond_vectors = raw_cond_vectors.clone()
 cond_vectors[:, :NUM_CONTINUOUS] = (cond_vectors[:, :NUM_CONTINUOUS] - cond_mean) / cond_std
 
-fixed_real_idx = 0
+# --- Train/val split ---
+# A single reproducible permutation drives the split for both data modes.
+num_total = len(cond_vectors)
+val_fraction = float(args.val_fraction)
+if val_fraction < 0 or val_fraction >= 1:
+    raise ValueError(f"--val_fraction must be in [0, 1); got {val_fraction}.")
+split_generator = torch.Generator().manual_seed(int(args.split_seed))
+perm = torch.randperm(num_total, generator=split_generator).tolist()
+num_val = int(round(num_total * val_fraction))
+val_indices = sorted(perm[:num_val])
+train_indices = sorted(perm[num_val:])
+if len(train_indices) == 0:
+    raise ValueError("Train split is empty; lower --val_fraction.")
+print(
+    f"[train] split: {len(train_indices)} train / {len(val_indices)} val "
+    f"(val_fraction={val_fraction}, seed={args.split_seed})"
+)
+
+# Keep the fixed preview sample inside the train split for stable monitoring.
+fixed_real_idx = train_indices[0]
 fixed_real_cond = raw_cond_vectors[fixed_real_idx]
 fixed_rand_idx = torch.randint(len(raw_cond_vectors), (1,)).item()
 fixed_rand_cond = raw_cond_vectors[fixed_rand_idx]
@@ -353,10 +398,13 @@ if args.data_mode == "latent":
         )
 
     data_mean = 0.0
-    data_std = float(data_tensor.std().item())
+    # Estimate the normalization scale from the train split only.
+    data_std = float(data_tensor[train_indices].std().item())
     train_data = data_tensor / data_std
     fixed_real_stft = decode_embedding(data_tensor[fixed_real_idx])
-    dataset = TensorDataset(train_data, cond_vectors)
+    full_dataset = TensorDataset(train_data, cond_vectors)
+    train_dataset = Subset(full_dataset, train_indices)
+    val_dataset = Subset(full_dataset, val_indices) if val_indices else None
     data_shape = tuple(train_data.shape[1:])
     num_workers = 0
 
@@ -377,12 +425,15 @@ else:
         target_time_bins=target_time_bins,
     )
 
-    data_mean, data_std = stft_dataset.estimate_stats(args.stft_stats_samples)
+    data_mean, data_std = stft_dataset.estimate_stats(
+        args.stft_stats_samples, indices=train_indices
+    )
     stft_dataset.set_normalization(data_mean, data_std)
     fixed_real_stft = stft_dataset._compute_raw_stft(fixed_real_idx)
     x0, _ = stft_dataset[0]
     data_shape = tuple(x0.shape)
-    dataset = stft_dataset
+    train_dataset = Subset(stft_dataset, train_indices)
+    val_dataset = Subset(stft_dataset, val_indices) if val_indices else None
     num_workers = max(0, int(args.num_workers))
 
     print(
@@ -392,13 +443,24 @@ else:
     )
 
 dataloader = DataLoader(
-    dataset,
+    train_dataset,
     batch_size=BATCH_SIZE,
     shuffle=True,
     num_workers=num_workers,
     pin_memory=(DEVICE == "cuda"),
     persistent_workers=(num_workers > 0),
 )
+
+val_dataloader = None
+if val_dataset is not None and len(val_dataset) > 0:
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=(DEVICE == "cuda"),
+        persistent_workers=(num_workers > 0),
+    )
 
 # --- Model & Scheduler ---
 num_stations = max(int(m["station_idx"]) for m in metadatas) + 1
@@ -432,6 +494,10 @@ scale_payload = {
     "data_shape": [int(data_shape[0]), int(data_shape[1]), int(data_shape[2])],
     "stft_freq_bins": int(data_shape[1]) if args.data_mode == "stft" else None,
     "stft_time_bins": int(data_shape[2]) if args.data_mode == "stft" else None,
+    "split_seed": int(args.split_seed),
+    "val_fraction": float(val_fraction),
+    "train_indices": train_indices,
+    "val_indices": val_indices,
 }
 json.dump(scale_payload, open("embeddings/scale.json", "w"))
 
@@ -570,6 +636,52 @@ def _cleanup_checkpoints(pattern: str, keep: int):
         shutil.rmtree(old)
 
 
+def _diffusion_loss(batch_data, batch_cond, generator=None):
+    """Compute the training objective for one batch (shared by train and val)."""
+    noise = torch.randn(batch_data.shape, device=batch_data.device, generator=generator)
+    if TRAINING_TYPE == "flow_matching":
+        t_cont = torch.rand(batch_data.shape[0], device=batch_data.device, generator=generator)
+        timesteps = (t_cont * NUM_TRAIN_TIMESTEPS).long().clamp(0, NUM_TRAIN_TIMESTEPS - 1)
+        noisy_data = (1 - t_cont[:, None, None, None]) * batch_data + t_cont[:, None, None, None] * noise
+        target = noise - batch_data
+    else:
+        timesteps = torch.randint(
+            0, noise_scheduler.config.num_train_timesteps, (batch_data.shape[0],),
+            device=batch_data.device, generator=generator,
+        ).long()
+        noisy_data = noise_scheduler.add_noise(batch_data, noise, timesteps)
+        if args.prediction_target == "epsilon":
+            target = noise
+        elif args.prediction_target == "x0":
+            target = batch_data
+        elif args.prediction_target == "v_prediction":
+            target = noise_scheduler.get_velocity(batch_data, noise, timesteps)
+        else:
+            raise ValueError(f"Unsupported prediction_target: {args.prediction_target}")
+
+    cond = batch_cond.unsqueeze(1)
+    model_pred = model.forward(noisy_data, timesteps, cond).sample
+    return torch.nn.functional.mse_loss(model_pred, target)
+
+
+@torch.no_grad()
+def _evaluate(loader) -> float:
+    """Average validation loss with a fixed noise seed for epoch-to-epoch comparability."""
+    model.eval()
+    # CUDA RNG generators must live on the data device; CPU otherwise.
+    gen = torch.Generator(device=DEVICE).manual_seed(int(args.split_seed))
+    total_loss = 0.0
+    total_count = 0
+    for batch_data, batch_cond in loader:
+        batch_data = batch_data.to(DEVICE)
+        batch_cond = batch_cond.to(DEVICE)
+        loss = _diffusion_loss(batch_data, batch_cond, generator=gen)
+        total_loss += loss.item() * batch_data.shape[0]
+        total_count += batch_data.shape[0]
+    model.train()
+    return total_loss / max(1, total_count)
+
+
 # --- Training Loop ---
 embedding_shape = data_shape
 global_step = 0
@@ -590,32 +702,7 @@ for epoch in range(NUM_EPOCHS):
         for pg in optimizer.param_groups:
             pg["lr"] = step_lr
 
-        noise = torch.randn_like(batch_data)
-        if TRAINING_TYPE == "flow_matching":
-            t_cont = torch.rand(batch_data.shape[0], device=DEVICE)
-            timesteps = (t_cont * NUM_TRAIN_TIMESTEPS).long().clamp(0, NUM_TRAIN_TIMESTEPS - 1)
-            noisy_data = (1 - t_cont[:, None, None, None]) * batch_data + t_cont[:, None, None, None] * noise
-            target = noise - batch_data
-        else:
-            timesteps = torch.randint(
-                0, noise_scheduler.config.num_train_timesteps, (batch_data.shape[0],), device=DEVICE,
-            ).long()
-            noisy_data = noise_scheduler.add_noise(batch_data, noise, timesteps)
-            if args.prediction_target == "epsilon":
-                target = noise
-            elif args.prediction_target == "x0":
-                target = batch_data
-            elif args.prediction_target == "v_prediction":
-                target = noise_scheduler.get_velocity(batch_data, noise, timesteps)
-            else:
-                raise ValueError(f"Unsupported prediction_target: {args.prediction_target}")
-
-        # Metadata conditioning for cross-attention.
-        cond = batch_cond.unsqueeze(1)
-
-        model_pred = model.forward(noisy_data, timesteps, cond).sample
-
-        loss = torch.nn.functional.mse_loss(model_pred, target)
+        loss = _diffusion_loss(batch_data, batch_cond)
 
         optimizer.zero_grad()
         loss.backward()
@@ -638,6 +725,15 @@ for epoch in range(NUM_EPOCHS):
     print(f"Epoch {epoch + 1}/{NUM_EPOCHS} - Loss: {avg_loss:.6f}  LR: {current_lr:.2e}")
     writer.add_scalar("Loss/train", avg_loss, epoch)
     writer.add_scalar("LR", current_lr, epoch)
+
+    if (
+        val_dataloader is not None
+        and VAL_EVERY_N_EPOCHS > 0
+        and (epoch + 1) % VAL_EVERY_N_EPOCHS == 0
+    ):
+        val_loss = _evaluate(val_dataloader)
+        print(f"Epoch {epoch + 1}/{NUM_EPOCHS} - Val Loss: {val_loss:.6f}")
+        writer.add_scalar("Loss/val", val_loss, epoch)
 
     if (epoch + 1) % CHECKPOINT_EVERY_N_EPOCHS == 0:
         _save_checkpoint(f"epoch_{epoch + 1}")
