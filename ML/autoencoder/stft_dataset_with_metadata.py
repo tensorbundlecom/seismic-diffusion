@@ -10,6 +10,10 @@ from scipy import signal
 import pandas as pd
 
 
+# Fixed channel-type ordering so channel_idx is stable across runs/datasets.
+CHANNEL_TO_IDX = {"HH": 0, "HN": 1, "EH": 2, "BH": 3}
+
+
 class SeismicSTFTDatasetWithMetadata(Dataset):
     """
     PyTorch Dataset for loading seismic waveforms from mseed files and converting them to STFT spectrograms.
@@ -30,6 +34,10 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
         log_scale: bool = True,
         return_magnitude: bool = True,
         magnitude_col: str = "xM",  # Which magnitude column to use (MD, ML, Mw, Ms, Mb, xM)
+        target_freq_bins: int = None,
+        target_time_bins: int = None,
+        resample_hz: float = 100.0,
+        target_seconds: float = 70.0,
     ):
         """
         Initialize the dataset.
@@ -56,7 +64,16 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
         self.log_scale = log_scale
         self.return_magnitude = return_magnitude
         self.magnitude_col = magnitude_col
-        
+        self.target_freq_bins = int(target_freq_bins) if target_freq_bins else None
+        self.target_time_bins = int(target_time_bins) if target_time_bins else None
+        self.resample_hz = float(resample_hz) if resample_hz else None
+        self.target_seconds = float(target_seconds) if target_seconds else None
+        self.target_samples = (
+            int(round(self.resample_hz * self.target_seconds))
+            if (self.resample_hz and self.target_seconds)
+            else None
+        )
+
         # Load event catalog
         print(f"Loading event catalog from {event_file}...")
         self.event_catalog = self._load_event_catalog()
@@ -249,9 +266,35 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
             'location': event['Yer'],
         }
     
+    def _prep_trace_data(self, trace):
+        """Resample to resample_hz and trim/zero-pad to target_samples; return float32 data."""
+        if self.resample_hz is not None and abs(trace.stats.sampling_rate - self.resample_hz) > 1e-6:
+            trace.resample(self.resample_hz)
+        data = trace.data.astype(np.float32)
+        if self.target_samples is not None:
+            n = self.target_samples
+            if data.shape[0] >= n:
+                data = data[:n]
+            else:
+                data = np.pad(data, (0, n - data.shape[0]), mode="constant")
+        return data
+
+    def _resize_spectrogram(self, spectrogram_tensor):
+        """Bilinearly resize (C, F, T) to the configured target (F, T), if any."""
+        if self.target_freq_bins is None and self.target_time_bins is None:
+            return spectrogram_tensor
+        f = self.target_freq_bins if self.target_freq_bins is not None else spectrogram_tensor.shape[1]
+        t = self.target_time_bins if self.target_time_bins is not None else spectrogram_tensor.shape[2]
+        if (spectrogram_tensor.shape[1], spectrogram_tensor.shape[2]) == (f, t):
+            return spectrogram_tensor
+        resized = torch.nn.functional.interpolate(
+            spectrogram_tensor.unsqueeze(0), size=(f, t), mode="bilinear", align_corners=False
+        )
+        return resized.squeeze(0)
+
     def __len__(self):
         return len(self.file_paths)
-    
+
     def __getitem__(self, idx):
         """
         Load a waveform and convert it to STFT spectrogram, along with event and station metadata.
@@ -306,9 +349,9 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
             stft_channels = []
             
             for trace in stream:
-                # Get the waveform data
-                data = trace.data.astype(np.float32)
-                
+                # Get the waveform data (resampled + length-fixed for cross-channel alignment)
+                data = self._prep_trace_data(trace)
+
                 # Compute STFT
                 f, t, Zxx = signal.stft(
                     data,
@@ -354,6 +397,11 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
             
             # Convert to torch tensors
             spectrogram_tensor = torch.from_numpy(spectrogram).float()
+
+            # Resize to a fixed (freq, time) so channel types with different
+            # sampling rates (and thus different native STFT shapes) align.
+            spectrogram_tensor = self._resize_spectrogram(spectrogram_tensor)
+
             magnitude_tensor = torch.tensor(event_info['magnitude'], dtype=torch.float32)
             location_tensor = torch.tensor([
                 event_info['latitude_norm'],
@@ -369,9 +417,10 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
                 'event_id': event_id,
                 'station_name': station_from_stream,
                 'channel_type': file_path.parent.name,
+                'channel_idx': CHANNEL_TO_IDX.get(file_path.parent.name, 0),
                 'sampling_rate': stream[0].stats.sampling_rate,
                 'n_samples': len(stream[0].data),
-                'shape': spectrogram_tensor.shape,
+                'shape': list(spectrogram_tensor.shape),
                 'magnitude': event_info['magnitude'],
                 'latitude': event_info['latitude'],
                 'longitude': event_info['longitude'],

@@ -82,6 +82,34 @@ def parse_args():
         help="Path to waveform_summary.csv; if provided, snr_max is added to each metadata entry",
     )
     parser.add_argument(
+        "--target_freq_bins",
+        type=int,
+        default=None,
+        help="Resize STFT frequency axis to this many bins. Must match the value used "
+             "when training the autoencoder. None = keep native bins.",
+    )
+    parser.add_argument(
+        "--target_time_bins",
+        type=int,
+        default=None,
+        help="Resize STFT time axis to this many bins. Must match the autoencoder. "
+             "None = keep native bins.",
+    )
+    parser.add_argument(
+        "--resample_hz",
+        type=float,
+        default=100.0,
+        help="Resample every trace to this rate before STFT (must match the autoencoder). "
+             "0/None to disable.",
+    )
+    parser.add_argument(
+        "--target_seconds",
+        type=float,
+        default=70.0,
+        help="Trim/zero-pad each resampled trace to round(resample_hz*target_seconds) "
+             "samples for a uniform STFT shape (must match the autoencoder).",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default="cuda" if torch.cuda.is_available() else "cpu",
@@ -120,6 +148,10 @@ def main():
         nfft=nfft,
         normalize=True,
         log_scale=True,
+        target_freq_bins=args.target_freq_bins,
+        target_time_bins=args.target_time_bins,
+        resample_hz=args.resample_hz,
+        target_seconds=args.target_seconds,
     )
 
     snr_lookup = {}
@@ -163,6 +195,10 @@ def main():
             "nperseg": nperseg,
             "noverlap": noverlap,
             "nfft": nfft,
+            "target_freq_bins": args.target_freq_bins,
+            "target_time_bins": args.target_time_bins,
+            "resample_hz": args.resample_hz,
+            "target_seconds": args.target_seconds,
         },
         "channels": args.channels,
         "num_embeddings": len(embeddings),

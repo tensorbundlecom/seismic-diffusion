@@ -20,3 +20,4 @@ ML/diffusion/runs/diffusion_latent_flow_matching/
 Seismic Diffusion Project.zip
 ML/amplitude/runs/*
 ML/amplitude/checkpoints/amp_stats.json
+ML/diffusion/runs/

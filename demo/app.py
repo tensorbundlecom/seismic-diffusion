@@ -47,6 +47,11 @@ STATION_NAMES = [
     "SLVT", "SPNC", "TVSB", "UVEZ", "YAYO", "YLV",
 ]
 
+# Channel/instrument types, in the fixed order used for channel_idx during training
+# (must match CHANNEL_TO_IDX in ML/autoencoder/stft_dataset_with_metadata.py).
+CHANNEL_NAMES = ["HH", "HN", "EH", "BH"]
+CHANNEL_TO_IDX = {name: idx for idx, name in enumerate(CHANNEL_NAMES)}
+
 NUM_TRAIN_TIMESTEPS = 1000
 FS      = 100.0   # Hz  (HH-channel sampling rate)
 WAVEFORM_DISPLAY_SECONDS = 70.0
@@ -264,6 +269,33 @@ def _find_latest_checkpoint_by_type(training_type: str):
         return None, None
     latest = max(candidates, key=lambda p: p.stat().st_mtime)
     return latest, _read_diffusion_unet_config(latest)
+
+
+def _list_diffusion_checkpoints():
+    """
+    Return a list of (label, Path) for every available diffusion checkpoint,
+    newest first. Labels are 'ddpm/epoch_44', 'flow_matching/step_5200', or the
+    bare dir name for legacy top-level checkpoints.
+    """
+    ckpt_root = DIFF / "checkpoints"
+    if not ckpt_root.exists():
+        return []
+
+    items = []
+    for type_name in ("ddpm", "flow_matching"):
+        type_root = ckpt_root / type_name
+        if type_root.exists():
+            for p in type_root.iterdir():
+                if p.is_dir() and (p / "config.json").exists():
+                    items.append((f"{type_name}/{p.name}", p))
+    for p in ckpt_root.iterdir():
+        if not p.is_dir() or p.name in ("ddpm", "flow_matching"):
+            continue
+        if (p / "config.json").exists():
+            items.append((p.name, p))
+
+    items.sort(key=lambda kv: kv[1].stat().st_mtime, reverse=True)
+    return items
 
 
 def _find_compatible_diffusion_checkpoint(latent_channels: int):
@@ -490,10 +522,14 @@ def generate(diff_unet, ae_model, scheduler, emb_shape,
     training_type: 'ddpm' uses DDPM scheduler; 'flow_matching' uses Euler ODE (100 steps).
     """
     if hasattr(diff_unet, "station_embedding"):
-        cond_vec = create_conditioning_vector(cond_meta, station_locations)
-        expected_width = diff_unet.num_continuous + 1
-        if cond_vec.shape[0] > expected_width:
-            cond_vec = torch.cat([cond_vec[:diff_unet.num_continuous], cond_vec[-1:]])
+        # create_conditioning_vector returns [..continuous.., station_idx, channel_idx].
+        # Keep the channel tail only when the model was trained with a channel embedding.
+        full = create_conditioning_vector(cond_meta, station_locations)
+        nc = diff_unet.num_continuous
+        parts = [full[:nc], full[nc:nc + 1]]  # continuous + station_idx
+        if getattr(diff_unet, "use_channel", False):
+            parts.append(full[nc + 1:nc + 2])  # channel_idx
+        cond_vec = torch.cat(parts)
     else:
         cond_vec = _create_legacy_conditioning_vector(cond_meta)
     cond_norm = normalise_cond(cond_vec).unsqueeze(0).unsqueeze(0).to(DEVICE)
@@ -578,6 +614,7 @@ class SeismicDemoApp(tk.Tk):
         self._normalise_cond = lambda v: v
         self._station_locations = {}
         self._train_metadatas   = []
+        self._val_indices       = []   # held-out (test) indices into _train_metadatas, from scale.json
         self._amp_model      = None
         self._amp_log_std_mean  = None
         self._amp_log_std_scale = None
@@ -591,6 +628,9 @@ class SeismicDemoApp(tk.Tk):
         self._map_fig = None
         self._map_ax = None
         self._map_canvas = None
+        self._diff_ckpt_path = None
+        self._ae_ckpt_path = None
+        self._diff_ckpt_choices = {}   # label -> checkpoint Path
 
         self._apply_theme()
         self._build_ui()
@@ -607,7 +647,26 @@ class SeismicDemoApp(tk.Tk):
         s.configure("TLabelframe.Label",background=BG,      foreground=BLUE,  font=("Helvetica", 10, "bold"))
         s.configure("TButton",          background=BLUE,    foreground=BG,    font=("Helvetica", 11, "bold"))
         s.map("TButton", background=[("disabled", OVERLAY), ("active", TEXT)])
-        s.configure("TCombobox",        fieldbackground=OVERLAY, foreground=TEXT, background=OVERLAY)
+        s.configure("TCombobox",        fieldbackground=OVERLAY, foreground=TEXT,
+                    background=OVERLAY, arrowcolor=TEXT)
+        # In clam, a readonly combobox renders its value as a "selected" field, so
+        # without these maps the text picks up the default (pale) selection colours.
+        s.map(
+            "TCombobox",
+            fieldbackground=[("readonly", OVERLAY), ("disabled", SURFACE)],
+            foreground=[("readonly", TEXT), ("disabled", SUBTEXT)],
+            selectbackground=[("readonly", OVERLAY)],
+            selectforeground=[("readonly", TEXT)],
+            arrowcolor=[("disabled", SUBTEXT)],
+        )
+        # The drop-down popup is a tk Listbox, styled via the option database.
+        self.option_add("*TCombobox*Listbox.background", OVERLAY)
+        self.option_add("*TCombobox*Listbox.foreground", TEXT)
+        self.option_add("*TCombobox*Listbox.selectBackground", BLUE)
+        self.option_add("*TCombobox*Listbox.selectForeground", BG)
+        self.option_add("*TCombobox*Listbox.font", ("Helvetica", 10))
+        s.configure("TSpinbox",         fieldbackground=OVERLAY, foreground=TEXT,
+                    background=OVERLAY, arrowcolor=TEXT)
         s.configure("Horizontal.TScale",background=BG,     troughcolor=OVERLAY, sliderlength=16)
         s.configure("TSeparator",       background=OVERLAY)
 
@@ -622,8 +681,36 @@ class SeismicDemoApp(tk.Tk):
         self._build_plots(root)
 
     def _build_controls(self, parent):
-        ctrl = ttk.LabelFrame(parent, text="Conditioning Parameters", padding=12)
-        ctrl.grid(row=0, column=0, sticky="ns", padx=(0, 12))
+        # Wrap the controls in a scrollable canvas so every control stays reachable
+        # even when the panel is taller than the window.
+        outer = ttk.Frame(parent)
+        outer.grid(row=0, column=0, sticky="ns", padx=(0, 12))
+
+        canvas = tk.Canvas(outer, bg=BG, highlightthickness=0, width=250)
+        vbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        vbar.pack(side="right", fill="y")
+
+        ctrl = ttk.LabelFrame(canvas, text="Conditioning Parameters", padding=12)
+        ctrl_window = canvas.create_window((0, 0), window=ctrl, anchor="nw")
+
+        # Keep the scroll region matched to the controls, and make the inner frame
+        # follow the canvas width so nothing is clipped horizontally.
+        canvas.bind_all(
+            "<MouseWheel>",
+            lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"),
+        )
+        canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
+        canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+        ctrl.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda e: canvas.itemconfigure(ctrl_window, width=e.width),
+        )
 
         # Model Type dropdown
         ttk.Label(ctrl, text="Model Type").pack(anchor="w")
@@ -637,6 +724,23 @@ class SeismicDemoApp(tk.Tk):
         ).pack(fill="x", pady=(2, 12))
         self._model_type_var.trace_add("write", lambda *_: self.after(0, self._on_model_type_changed))
 
+        # Diffusion checkpoint dropdown (populated once models finish loading)
+        ttk.Label(ctrl, text="Diffusion Model").pack(anchor="w")
+        self._diff_model_var = tk.StringVar(value="")
+        self._diff_model_cb = ttk.Combobox(
+            ctrl,
+            textvariable=self._diff_model_var,
+            values=[],
+            state="readonly",
+            width=16,
+        )
+        self._diff_model_cb.pack(fill="x", pady=(2, 12))
+        # Bind to the selection event (not a var trace) so programmatic updates
+        # that sync the dropdown to the loaded checkpoint don't trigger a reload.
+        self._diff_model_cb.bind(
+            "<<ComboboxSelected>>", lambda _e: self._on_diffusion_model_changed()
+        )
+
         # Station dropdown
         ttk.Label(ctrl, text="Station").pack(anchor="w")
         self._station_var = tk.StringVar(value="EDC")
@@ -649,6 +753,17 @@ class SeismicDemoApp(tk.Tk):
         )
         self._station_cb.pack(fill="x", pady=(2, 12))
         self._station_var.trace_add("write", lambda *_: self.after(0, self._update_station_map))
+
+        # Channel / instrument type dropdown (feeds the channel-type conditioning)
+        ttk.Label(ctrl, text="Channel").pack(anchor="w")
+        self._channel_var = tk.StringVar(value="HH")
+        ttk.Combobox(
+            ctrl,
+            textvariable=self._channel_var,
+            values=CHANNEL_NAMES,
+            state="readonly",
+            width=16,
+        ).pack(fill="x", pady=(2, 12))
 
         # Sliders: (label, key, lo, hi, default, fmt)
         sliders = [
@@ -683,6 +798,10 @@ class SeismicDemoApp(tk.Tk):
                                     command=self._on_random_eq, state="disabled")
         self._rand_btn.pack(fill="x", pady=(0, 4))
 
+        self._test_btn = ttk.Button(ctrl, text="🎲  Random EQ (Test)",
+                                    command=self._on_random_eq_test, state="disabled")
+        self._test_btn.pack(fill="x", pady=(0, 4))
+
         self._gen_btn = ttk.Button(ctrl, text="⚡  Generate",
                                    command=self._on_generate, state="disabled")
         self._gen_btn.pack(fill="x", ipady=8)
@@ -690,6 +809,10 @@ class SeismicDemoApp(tk.Tk):
         self._status_lbl = ttk.Label(ctrl, text="Loading models…",
                                      foreground=YELLOW, wraplength=210, justify="left")
         self._status_lbl.pack(pady=10)
+
+        self._model_info_lbl = ttk.Label(ctrl, text="", foreground=SUBTEXT,
+                                         wraplength=210, justify="left", font=("Helvetica", 8))
+        self._model_info_lbl.pack(anchor="w", pady=(0, 4))
 
     def _build_griffin_lim_controls(self, parent):
         gl_frame = ttk.LabelFrame(parent, text="Griffin-Lim Params", padding=8)
@@ -944,6 +1067,15 @@ class SeismicDemoApp(tk.Tk):
             self._normalise_cond = _make_normalise_cond(scale)
             self._station_locations = _load_station_locations()
 
+            # Held-out split recorded by ML/diffusion/train.py. These index into the
+            # same metadata.json the diffusion model was trained on, so they are the
+            # samples the model never saw during training ("test" set).
+            self._val_indices = [int(i) for i in scale.get("val_indices", [])]
+            if self._val_indices:
+                print(f"[demo] Loaded {len(self._val_indices):,} held-out (test) indices")
+            else:
+                print("[demo] No val_indices in scale.json; 'Random EQ (Test)' will be disabled")
+
             meta_path = DIFF / "embeddings" / "metadata.json"
             if meta_path.exists():
                 self._train_metadatas = json.load(open(meta_path))
@@ -970,6 +1102,7 @@ class SeismicDemoApp(tk.Tk):
                 raise FileNotFoundError(
                     "No diffusion checkpoint found.\n"
                     "Train it first with ML/diffusion/train.py")
+            self._diff_ckpt_path = diff_ckpt
             self._set_status(f"Loading diffusion  ({diff_ckpt.name})…", YELLOW)
             station_emb_path = diff_ckpt / "station_embedding.pt"
             if station_emb_path.exists():
@@ -1000,6 +1133,7 @@ class SeismicDemoApp(tk.Tk):
                         "No autoencoder checkpoint found.\n"
                         "Train it first with ML/autoencoder/train.py"
                     )
+                self._ae_ckpt_path = ae_ckpt
                 self._set_status(f"Loading AE  ({ae_ckpt.parent.name})…", YELLOW)
                 self._ae_model, ae_config = _load_ae(str(ae_ckpt), device=DEVICE)
                 self._ae_model.eval()
@@ -1035,6 +1169,7 @@ class SeismicDemoApp(tk.Tk):
                     )
             else:
                 self._ae_model = None
+                self._ae_ckpt_path = None
                 stft_cfg = _get_embeddings_source_stft_config()
                 _apply_ae_stft_config(stft_cfg)
                 print(
@@ -1069,9 +1204,16 @@ class SeismicDemoApp(tk.Tk):
                 _load_amplitude_model(device=DEVICE)
             )
 
+            print(f"[demo] Loaded diffusion checkpoint: {self._rel_to_root(self._diff_ckpt_path)}")
+            if self._ae_ckpt_path is not None:
+                print(f"[demo] Loaded AE checkpoint: {self._rel_to_root(self._ae_ckpt_path)}")
+            self._set_model_info(self._diff_ckpt_path, self._ae_ckpt_path)
+            self._refresh_diffusion_model_list()
             self._set_status("Models ready ✓", GREEN)
             self.after(0, lambda: self._gen_btn.config(state="normal"))
             self.after(0, lambda: self._rand_btn.config(state="normal"))
+            self.after(0, lambda: self._test_btn.config(
+                state="normal" if self._val_indices else "disabled"))
 
         except FileNotFoundError as exc:
             self._set_status(str(exc), RED)
@@ -1082,6 +1224,23 @@ class SeismicDemoApp(tk.Tk):
 
     def _set_status(self, msg: str, colour: str = TEXT):
         self.after(0, lambda: self._status_lbl.config(text=msg, foreground=colour))
+
+    def _rel_to_root(self, path) -> str:
+        """Show a checkpoint path relative to the repo root when possible."""
+        if path is None:
+            return "—"
+        path = Path(path)
+        try:
+            return str(path.relative_to(ROOT))
+        except ValueError:
+            return str(path)
+
+    def _set_model_info(self, diff_ckpt=None, ae_ckpt=None):
+        lines = [f"Diffusion: {self._rel_to_root(diff_ckpt)}"]
+        if ae_ckpt is not None:
+            lines.append(f"AE: {self._rel_to_root(ae_ckpt)}")
+        text = "\n".join(lines)
+        self.after(0, lambda: self._model_info_lbl.config(text=text))
 
     def _draw_reference_stft(self, spec: np.ndarray, title: str = ""):
         for ax, channel, col in zip(self._ref_axes, spec, CH_COLS):
@@ -1143,12 +1302,30 @@ class SeismicDemoApp(tk.Tk):
         self._ref_wav_axes[-1].set_xlabel("Time (s)", color=TEXT, fontsize=9)
         self._ref_wav_canvas.draw()
 
-    def _on_random_eq(self):
+    def _on_random_eq_test(self):
+        """Pick a random earthquake from the held-out (test) split only."""
+        if not self._val_indices:
+            self._set_status(
+                "No held-out (test) samples available.\n"
+                "scale.json has no val_indices (train with --val_fraction > 0).",
+                RED,
+            )
+            return
+        self._on_random_eq(indices=self._val_indices)
+
+    def _on_random_eq(self, indices=None):
         import random
         if not self._train_metadatas:
             self._set_status("No training metadata loaded.", RED)
             return
-        m = random.choice(self._train_metadatas)
+        if indices is not None:
+            valid = [i for i in indices if 0 <= i < len(self._train_metadatas)]
+            if not valid:
+                self._set_status("No valid held-out (test) samples to draw from.", RED)
+                return
+            m = self._train_metadatas[random.choice(valid)]
+        else:
+            m = random.choice(self._train_metadatas)
         self._svars["mag"].set(float(m["magnitude"]))
         self._svars["lat"].set(float(m["latitude"]))
         self._svars["lon"].set(float(m["longitude"]))
@@ -1158,6 +1335,9 @@ class SeismicDemoApp(tk.Tk):
         station = m.get("station_name", "")
         if station in STATION_NAMES and station in self._station_locations:
             self._station_var.set(station)
+        channel = m.get("channel_type", "")
+        if channel in CHANNEL_NAMES:
+            self._channel_var.set(channel)
 
         try:
             spec, waves, sr = self._load_reference_data(m["file_path"])
@@ -1177,28 +1357,79 @@ class SeismicDemoApp(tk.Tk):
         self._set_status(f"Loading {selected} model…", YELLOW)
         self.after(0, lambda: self._gen_btn.config(state="disabled"))
         self.after(0, lambda: self._rand_btn.config(state="disabled"))
+        self.after(0, lambda: self._test_btn.config(state="disabled"))
         threading.Thread(
             target=self._reload_diffusion_model,
             args=(training_type,),
             daemon=True,
         ).start()
 
-    def _reload_diffusion_model(self, training_type: str):
-        try:
-            diff_ckpt, _ = _find_latest_checkpoint_by_type(training_type)
-            if diff_ckpt is None:
-                self._set_status(
-                    f"No {training_type} checkpoint found.\n"
-                    f"Train with: python train.py --training_type {training_type}",
-                    RED,
-                )
-                _restore = "Flow Matching" if self._training_type == "flow_matching" else "DDPM"
-                self.after(0, lambda d=_restore: self._model_type_var.set(d))
-                self.after(0, lambda: self._gen_btn.config(state="normal"))
-                self.after(0, lambda: self._rand_btn.config(state="normal"))
-                return
+    def _refresh_diffusion_model_list(self):
+        """(Re)populate the diffusion-checkpoint dropdown and sync its selection."""
+        items = _list_diffusion_checkpoints()
+        self._diff_ckpt_choices = {label: path for label, path in items}
+        labels = list(self._diff_ckpt_choices.keys())
 
-            self._set_status(f"Loading {training_type} ({diff_ckpt.name})…", YELLOW)
+        def _apply():
+            self._diff_model_cb.configure(values=labels)
+            self._sync_diffusion_model_selection(fallback_first=True)
+
+        self.after(0, _apply)
+
+    def _sync_diffusion_model_selection(self, fallback_first: bool = False):
+        """Point the dropdown at the currently loaded checkpoint without reloading."""
+        label = None
+        if self._diff_ckpt_path is not None:
+            for lbl, path in self._diff_ckpt_choices.items():
+                if path == self._diff_ckpt_path:
+                    label = lbl
+                    break
+
+        def _apply():
+            if label is not None:
+                self._diff_model_var.set(label)
+            elif fallback_first and self._diff_ckpt_choices:
+                self._diff_model_var.set(next(iter(self._diff_ckpt_choices)))
+
+        self.after(0, _apply)
+
+    def _on_diffusion_model_changed(self):
+        label = self._diff_model_var.get()
+        diff_ckpt = self._diff_ckpt_choices.get(label)
+        if diff_ckpt is None or diff_ckpt == self._diff_ckpt_path:
+            return
+        self._set_status(f"Loading {label}…", YELLOW)
+        self.after(0, lambda: self._gen_btn.config(state="disabled"))
+        self.after(0, lambda: self._rand_btn.config(state="disabled"))
+        self.after(0, lambda: self._test_btn.config(state="disabled"))
+        threading.Thread(
+            target=self._load_diffusion_checkpoint,
+            args=(diff_ckpt,),
+            daemon=True,
+        ).start()
+
+    def _reload_diffusion_model(self, training_type: str):
+        diff_ckpt, _ = _find_latest_checkpoint_by_type(training_type)
+        if diff_ckpt is None:
+            self._set_status(
+                f"No {training_type} checkpoint found.\n"
+                f"Train with: python train.py --training_type {training_type}",
+                RED,
+            )
+            _restore = "Flow Matching" if self._training_type == "flow_matching" else "DDPM"
+            self.after(0, lambda d=_restore: self._model_type_var.set(d))
+            self.after(0, lambda: self._gen_btn.config(state="normal"))
+            self.after(0, lambda: self._rand_btn.config(state="normal"))
+            self.after(0, lambda: self._test_btn.config(
+                state="normal" if self._val_indices else "disabled"))
+            return
+        self._load_diffusion_checkpoint(diff_ckpt)
+
+    def _load_diffusion_checkpoint(self, diff_ckpt: Path):
+        """Load a specific diffusion checkpoint dir into the live model state."""
+        try:
+            self._diff_ckpt_path = diff_ckpt
+            self._set_status(f"Loading {diff_ckpt.name}…", YELLOW)
             station_emb_path = diff_ckpt / "station_embedding.pt"
             if station_emb_path.exists():
                 self._diff_unet = DiffusionUNet2D.load_pretrained(diff_ckpt).to(DEVICE)
@@ -1208,7 +1439,11 @@ class SeismicDemoApp(tk.Tk):
             self._scheduler = _load_diffusion_scheduler(diff_ckpt)
 
             train_cfg = _read_diffusion_training_config(diff_ckpt)
-            self._training_type = str(train_cfg.get("training_type", training_type)).lower()
+            new_training_type = str(train_cfg.get("training_type", self._training_type)).lower()
+            if new_training_type not in {"ddpm", "flow_matching"}:
+                new_training_type = self._training_type
+            # Update before touching _model_type_var so its trace handler no-ops.
+            self._training_type = new_training_type
             new_data_mode = str(train_cfg.get("data_mode", self._data_mode)).lower()
             if new_data_mode not in {"latent", "stft"}:
                 new_data_mode = self._data_mode
@@ -1223,17 +1458,23 @@ class SeismicDemoApp(tk.Tk):
                         "No autoencoder checkpoint found.\n"
                         "Train it first with ML/autoencoder/train.py"
                     )
+                self._ae_ckpt_path = ae_ckpt
                 self._set_status(f"Loading AE ({ae_ckpt.parent.name})…", YELLOW)
                 self._ae_model, _ = _load_ae(str(ae_ckpt), device=DEVICE)
                 self._ae_model.eval()
             elif new_data_mode == "stft":
                 self._ae_model = None
+                self._ae_ckpt_path = None
 
             self._data_mode = new_data_mode
             print(f"[demo] Switched to {self._training_type} model: {diff_ckpt.name}")
-            self._set_status(
-                f"{self._model_type_var.get()} model loaded ✓  ({diff_ckpt.name})", GREEN
-            )
+            self._set_model_info(self._diff_ckpt_path, self._ae_ckpt_path)
+
+            # Keep both dropdowns in sync with what was actually loaded.
+            _display = "Flow Matching" if self._training_type == "flow_matching" else "DDPM"
+            self.after(0, lambda d=_display: self._model_type_var.set(d))
+            self._sync_diffusion_model_selection()
+            self._set_status(f"Model loaded ✓  ({diff_ckpt.name})", GREEN)
         except Exception as exc:
             import traceback
             traceback.print_exc()
@@ -1241,6 +1482,8 @@ class SeismicDemoApp(tk.Tk):
         finally:
             self.after(0, lambda: self._gen_btn.config(state="normal"))
             self.after(0, lambda: self._rand_btn.config(state="normal"))
+            self.after(0, lambda: self._test_btn.config(
+                state="normal" if self._val_indices else "disabled"))
 
     # ── Generate callback ─────────────────────────────────────────────────────
     def _on_generate(self):
@@ -1255,6 +1498,7 @@ class SeismicDemoApp(tk.Tk):
             )
             return
         station_idx  = STATION_NAMES.index(station_name)
+        channel_name = self._channel_var.get()
         self._cond_meta_at_generate = {
             "magnitude":   self._svars["mag"].get(),
             "latitude":    self._svars["lat"].get(),
@@ -1263,6 +1507,8 @@ class SeismicDemoApp(tk.Tk):
             "snr":         self._svars["snr"].get(),
             "station_name": station_name,
             "station_idx": station_idx,
+            "channel_type": channel_name,
+            "channel_idx": CHANNEL_TO_IDX.get(channel_name, 0),
         }
         self._title_at_generate = (
             f"M{self._cond_meta_at_generate['magnitude']:.1f}  "
@@ -1270,7 +1516,7 @@ class SeismicDemoApp(tk.Tk):
             f"lon={self._cond_meta_at_generate['longitude']:.3f}  "
             f"depth={self._cond_meta_at_generate['depth']:.1f} km  "
             f"SNR={self._cond_meta_at_generate['snr']:.1f}  "
-            f"station={station_name}"
+            f"station={station_name}  channel={channel_name}"
         )
         self._gl_params_at_generate = self._get_griffin_lim_params_from_ui()
         self._generating = True

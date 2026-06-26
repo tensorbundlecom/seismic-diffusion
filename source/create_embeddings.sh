@@ -1,0 +1,1 @@
+python create_embeddings.py   --data_dir ../../data/filtered_waveforms_snr2_2-15hz --waveform_summary ../../data/waveform_summary.csv

@@ -696,7 +696,18 @@ def parse_args():
                         help='Number of points to overlap between segments')
     parser.add_argument('--nfft', type=int, default=256,
                         help='Length of the FFT used')
-    
+    parser.add_argument('--target_freq_bins', type=int, default=None,
+                        help='Resize STFT frequency axis to this many bins (aligns channel '
+                             'types with different sampling rates). None = keep native bins.')
+    parser.add_argument('--target_time_bins', type=int, default=None,
+                        help='Resize STFT time axis to this many bins. None = keep native bins.')
+    parser.add_argument('--resample_hz', type=float, default=100.0,
+                        help='Resample every trace to this rate before STFT so channel types '
+                             'with different sampling rates align physically. 0/None to disable.')
+    parser.add_argument('--target_seconds', type=float, default=70.0,
+                        help='After resampling, trim/zero-pad each trace to '
+                             'round(resample_hz*target_seconds) samples for a uniform STFT shape.')
+
     # Model arguments
     parser.add_argument('--latent_channels', type=int, default=4,
                         help='Number of channels in the latent space (4 gives 45x compression for 129x111 inputs)')
@@ -791,8 +802,12 @@ def main():
         nfft=args.nfft,
         normalize=True,
         log_scale=True,
+        target_freq_bins=args.target_freq_bins,
+        target_time_bins=args.target_time_bins,
+        resample_hz=args.resample_hz,
+        target_seconds=args.target_seconds,
     )
-    
+
     # Split into train, validation, and test
     test_size = int(len(dataset) * 0.1)  # 10% for test
     val_size = int(len(dataset) * args.val_split)

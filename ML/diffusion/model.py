@@ -20,11 +20,18 @@ class DiffusionUNet2D:
         station_emb_dim=64,
         num_continuous=NUM_CONTINUOUS,
         base_channels=64,
+        num_channels=0,
+        channel_emb_dim=16,
     ):
         self.num_continuous = num_continuous
         self.num_stations = int(num_stations)
         self.station_emb_dim = int(station_emb_dim)
-        self.cond_dim = self.num_continuous + self.station_emb_dim
+        # Optional learned embedding for the instrument/channel type (HH/HN/EH/BH).
+        # num_channels=0 keeps the legacy station-only conditioning for old checkpoints.
+        self.num_channels = int(num_channels)
+        self.use_channel = self.num_channels > 0
+        self.channel_emb_dim = int(channel_emb_dim) if self.use_channel else 0
+        self.cond_dim = self.num_continuous + self.station_emb_dim + self.channel_emb_dim
 
         self.model = UNet2DConditionModel(
             sample_size=None,
@@ -52,36 +59,57 @@ class DiffusionUNet2D:
             cross_attention_dim=self.cond_dim,
         )
         self.station_embedding = torch.nn.Embedding(self.num_stations, self.station_emb_dim)
+        if self.use_channel:
+            self.channel_embedding = torch.nn.Embedding(self.num_channels, self.channel_emb_dim)
+
+    @property
+    def cond_input_width(self):
+        """Raw conditioning-vector width this model expects (before embedding lookups)."""
+        return self.num_continuous + 1 + (1 if self.use_channel else 0)
+
+    def _embeddings(self):
+        embs = [self.station_embedding]
+        if self.use_channel:
+            embs.append(self.channel_embedding)
+        return embs
 
     def parameters(self):
-        return chain(self.model.parameters(), self.station_embedding.parameters())
+        return chain(self.model.parameters(), *(e.parameters() for e in self._embeddings()))
 
     def to(self, device):
         self.model.to(device)
-        self.station_embedding.to(device)
+        for e in self._embeddings():
+            e.to(device)
         return self
 
     def train(self):
         self.model.train()
-        self.station_embedding.train()
+        for e in self._embeddings():
+            e.train()
 
     def eval(self):
         self.model.eval()
-        self.station_embedding.eval()
+        for e in self._embeddings():
+            e.eval()
 
     def _encode_conditioning(self, cond):
         """
-        Input cond shape: (B, seq_len, num_continuous + 1)
-        Last column is raw station_idx.
+        Input cond shape: (B, seq_len, cond_input_width).
+        Layout: [num_continuous continuous dims, station_idx, (channel_idx if use_channel)].
         """
-        if cond.shape[-1] != self.num_continuous + 1:
+        if cond.shape[-1] != self.cond_input_width:
             raise ValueError(
-                f"Expected conditioning width {self.num_continuous + 1}, got {cond.shape[-1]}"
+                f"Expected conditioning width {self.cond_input_width}, got {cond.shape[-1]}"
             )
         continuous = cond[..., : self.num_continuous]
         station_idx = cond[..., self.num_continuous].round().long().clamp(0, self.num_stations - 1)
-        station_emb = self.station_embedding(station_idx)
-        return torch.cat([continuous, station_emb], dim=-1)
+        parts = [continuous, self.station_embedding(station_idx)]
+        if self.use_channel:
+            channel_idx = (
+                cond[..., self.num_continuous + 1].round().long().clamp(0, self.num_channels - 1)
+            )
+            parts.append(self.channel_embedding(channel_idx))
+        return torch.cat(parts, dim=-1)
 
     def forward(self, x, timesteps, cond):
         cond_encoded = self._encode_conditioning(cond)
@@ -91,15 +119,17 @@ class DiffusionUNet2D:
         save_dir = Path(save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
         self.model.save_pretrained(str(save_dir))
-        torch.save(
-            {
-                "state_dict": self.station_embedding.state_dict(),
-                "num_stations": self.num_stations,
-                "station_emb_dim": self.station_emb_dim,
-                "num_continuous": self.num_continuous,
-            },
-            save_dir / "station_embedding.pt",
-        )
+        payload = {
+            "state_dict": self.station_embedding.state_dict(),
+            "num_stations": self.num_stations,
+            "station_emb_dim": self.station_emb_dim,
+            "num_continuous": self.num_continuous,
+            "num_channels": self.num_channels,
+            "channel_emb_dim": self.channel_emb_dim,
+        }
+        if self.use_channel:
+            payload["channel_state_dict"] = self.channel_embedding.state_dict()
+        torch.save(payload, save_dir / "station_embedding.pt")
 
     @classmethod
     def load_pretrained(cls, load_dir):
@@ -113,19 +143,27 @@ class DiffusionUNet2D:
             station_emb_dim=int(emb_payload["station_emb_dim"]),
             num_continuous=int(emb_payload.get("num_continuous", NUM_CONTINUOUS)),
             base_channels=int(unet.config.block_out_channels[0]),
+            num_channels=int(emb_payload.get("num_channels", 0)),
+            channel_emb_dim=int(emb_payload.get("channel_emb_dim", 16)),
         )
         wrapper.model = unet
         wrapper.station_embedding.load_state_dict(emb_payload["state_dict"])
+        if wrapper.use_channel and "channel_state_dict" in emb_payload:
+            wrapper.channel_embedding.load_state_dict(emb_payload["channel_state_dict"])
         return wrapper
 
 
 def create_conditioning_vector(metadata: Dict, station_locations: Dict[str, Dict[str, float]]):
     """
-    Returns conditioning vector of shape (7,) as:
-    [magnitude, 2d_distance_km, sin(azimuth), cos(azimuth), depth_km, snr, station_idx]
+    Returns conditioning vector of shape (8,) as:
+    [magnitude, 2d_distance_km, sin(azimuth), cos(azimuth), depth_km, snr,
+     station_idx, channel_idx]
 
     Azimuth is encoded as sin/cos to preserve its circular topology — raw degrees
     would make 1° and 359° appear maximally different after z-score normalization.
+
+    channel_idx (HH/HN/EH/BH) is appended last so consumers that only need the
+    station tail (e.g. the amplitude MLP) keep working unchanged.
     """
     station_name = metadata["station_name"]
     if station_name not in station_locations:
@@ -175,4 +213,5 @@ def create_conditioning_vector(metadata: Dict, station_locations: Dict[str, Dict
         dtype=torch.float32,
     )
     station_idx = torch.tensor([float(metadata["station_idx"])], dtype=torch.float32)
-    return torch.cat([continuous, station_idx])  # (7,)
+    channel_idx = torch.tensor([float(metadata.get("channel_idx", 0))], dtype=torch.float32)
+    return torch.cat([continuous, station_idx, channel_idx])  # (8,)

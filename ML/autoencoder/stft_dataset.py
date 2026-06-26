@@ -25,10 +25,14 @@ class SeismicSTFTDataset(Dataset):
         normalize: bool = True,
         log_scale: bool = True,
         return_magnitude: bool = True,
+        target_freq_bins: int = None,
+        target_time_bins: int = None,
+        resample_hz: float = 100.0,
+        target_seconds: float = 70.0,
     ):
         """
         Initialize the dataset.
-        
+
         Args:
             data_dir: Path to the filtered_waveforms directory
             channels: List of channel types to include (e.g., ["HH", "HN"])
@@ -38,6 +42,15 @@ class SeismicSTFTDataset(Dataset):
             normalize: Whether to normalize the spectrograms to [0, 1]
             log_scale: Whether to apply log scaling to the magnitude
             return_magnitude: If True, return magnitude; if False, return complex spectrogram
+            target_freq_bins: If set, bilinearly resize the STFT frequency axis to this size.
+            target_time_bins: If set, bilinearly resize the STFT time axis to this size.
+            resample_hz: Resample every trace to this sampling rate before the STFT.
+                This makes the physical analysis window (nperseg/fs seconds) and the
+                frequency axis (0..fs/2) identical across channel types, instead of
+                each rate producing a differently "stretched" spectrogram. None = off.
+            target_seconds: After resampling, trim/zero-pad each trace to exactly
+                round(resample_hz * target_seconds) samples so the STFT shape is
+                uniform with no distortion. None = leave native length.
         """
         self.data_dir = Path(data_dir)
         self.channels = channels
@@ -47,6 +60,15 @@ class SeismicSTFTDataset(Dataset):
         self.normalize = normalize
         self.log_scale = log_scale
         self.return_magnitude = return_magnitude
+        self.target_freq_bins = int(target_freq_bins) if target_freq_bins else None
+        self.target_time_bins = int(target_time_bins) if target_time_bins else None
+        self.resample_hz = float(resample_hz) if resample_hz else None
+        self.target_seconds = float(target_seconds) if target_seconds else None
+        self.target_samples = (
+            int(round(self.resample_hz * self.target_seconds))
+            if (self.resample_hz and self.target_seconds)
+            else None
+        )
         
         # Collect all mseed files from specified channels
         self.file_paths = []
@@ -63,7 +85,33 @@ class SeismicSTFTDataset(Dataset):
     
     def __len__(self):
         return len(self.file_paths)
-    
+
+    def _prep_trace_data(self, trace):
+        """Resample to resample_hz and trim/zero-pad to target_samples; return float32 data."""
+        if self.resample_hz is not None and abs(trace.stats.sampling_rate - self.resample_hz) > 1e-6:
+            trace.resample(self.resample_hz)
+        data = trace.data.astype(np.float32)
+        if self.target_samples is not None:
+            n = self.target_samples
+            if data.shape[0] >= n:
+                data = data[:n]
+            else:
+                data = np.pad(data, (0, n - data.shape[0]), mode="constant")
+        return data
+
+    def _resize_spectrogram(self, spectrogram_tensor):
+        """Bilinearly resize (C, F, T) to the configured target (F, T), if any."""
+        if self.target_freq_bins is None and self.target_time_bins is None:
+            return spectrogram_tensor
+        f = self.target_freq_bins if self.target_freq_bins is not None else spectrogram_tensor.shape[1]
+        t = self.target_time_bins if self.target_time_bins is not None else spectrogram_tensor.shape[2]
+        if (spectrogram_tensor.shape[1], spectrogram_tensor.shape[2]) == (f, t):
+            return spectrogram_tensor
+        resized = torch.nn.functional.interpolate(
+            spectrogram_tensor.unsqueeze(0), size=(f, t), mode="bilinear", align_corners=False
+        )
+        return resized.squeeze(0)
+
     def __getitem__(self, idx):
         """
         Load a waveform and convert it to STFT spectrogram.
@@ -89,9 +137,9 @@ class SeismicSTFTDataset(Dataset):
             stft_channels = []
             
             for trace in stream:
-                # Get the waveform data
-                data = trace.data.astype(np.float32)
-                
+                # Get the waveform data (resampled + length-fixed for cross-channel alignment)
+                data = self._prep_trace_data(trace)
+
                 # Compute STFT
                 f, t, Zxx = signal.stft(
                     data,
@@ -138,7 +186,11 @@ class SeismicSTFTDataset(Dataset):
             
             # Convert to torch tensor
             spectrogram_tensor = torch.from_numpy(spectrogram).float()
-            
+
+            # Resize to a fixed (freq, time) so channel types with different
+            # sampling rates (and thus different native STFT shapes) align.
+            spectrogram_tensor = self._resize_spectrogram(spectrogram_tensor)
+
             # Create metadata dictionary
             metadata = {
                 'file_path': str(file_path),

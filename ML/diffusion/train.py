@@ -35,6 +35,8 @@ class STFTDataWithMetadataConditionDataset(Dataset):
         base_dir: Path,
         target_freq_bins: int = None,
         target_time_bins: int = None,
+        resample_hz: float = 100.0,
+        target_seconds: float = 70.0,
     ):
         if len(metadatas) != len(cond_vectors):
             raise ValueError(
@@ -47,6 +49,13 @@ class STFTDataWithMetadataConditionDataset(Dataset):
         self.noverlap = int(noverlap)
         self.nfft = int(nfft)
         self.base_dir = base_dir
+        self.resample_hz = float(resample_hz) if resample_hz else None
+        self.target_seconds = float(target_seconds) if target_seconds else None
+        self.target_samples = (
+            int(round(self.resample_hz * self.target_seconds))
+            if (self.resample_hz and self.target_seconds)
+            else None
+        )
 
         if self.nperseg <= 0:
             raise ValueError(f"Invalid nperseg: {self.nperseg}")
@@ -123,7 +132,12 @@ class STFTDataWithMetadataConditionDataset(Dataset):
 
         channels = []
         for trace in stream:
+            if self.resample_hz is not None and abs(trace.stats.sampling_rate - self.resample_hz) > 1e-6:
+                trace.resample(self.resample_hz)
             data = trace.data.astype(np.float32)
+            if self.target_samples is not None:
+                n = self.target_samples
+                data = data[:n] if data.shape[0] >= n else np.pad(data, (0, n - data.shape[0]), mode="constant")
             _, _, zxx = self._sp_signal.stft(
                 data,
                 fs=trace.stats.sampling_rate,
@@ -205,7 +219,7 @@ class STFTDataWithMetadataConditionDataset(Dataset):
 
 def _load_source_stft_config() -> Dict[str, int]:
     source_path = Path("embeddings/source.json")
-    defaults = {"nperseg": 256, "noverlap": 192, "nfft": 256}
+    defaults = {"nperseg": 256, "noverlap": 192, "nfft": 256, "resample_hz": 100.0, "target_seconds": 70.0}
     if not source_path.exists():
         print("[train] embeddings/source.json not found; using default STFT params.")
         return defaults
@@ -217,6 +231,8 @@ def _load_source_stft_config() -> Dict[str, int]:
             "nperseg": int(stft.get("nperseg", defaults["nperseg"])),
             "noverlap": int(stft.get("noverlap", defaults["noverlap"])),
             "nfft": int(stft.get("nfft", defaults["nfft"])),
+            "resample_hz": stft.get("resample_hz", defaults["resample_hz"]),
+            "target_seconds": stft.get("target_seconds", defaults["target_seconds"]),
         }
     except Exception as exc:
         print(f"[train] Failed reading source STFT config ({exc}); using defaults.")
@@ -341,6 +357,7 @@ CHECKPOINT_EVERY_N_EPOCHS = 1
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 PREDICTION_TARGET = "sample" if args.prediction_target == "x0" else args.prediction_target  # HF scheduler name
 STATION_EMB_DIM = 64
+CHANNEL_EMB_DIM = 16
 NUM_CONTINUOUS = 6
 CFG_DROPOUT = 0.15       # fraction of samples per batch trained unconditionally
 CFG_GUIDANCE_SCALE = 3.0 # guidance scale used when logging preview images
@@ -423,6 +440,8 @@ else:
         base_dir=Path(__file__).resolve().parent,
         target_freq_bins=target_freq_bins,
         target_time_bins=target_time_bins,
+        resample_hz=stft_cfg["resample_hz"],
+        target_seconds=stft_cfg["target_seconds"],
     )
 
     data_mean, data_std = stft_dataset.estimate_stats(
@@ -464,14 +483,17 @@ if val_dataset is not None and len(val_dataset) > 0:
 
 # --- Model & Scheduler ---
 num_stations = max(int(m["station_idx"]) for m in metadatas) + 1
+num_channels = max(int(m.get("channel_idx", 0)) for m in metadatas) + 1
 model = DiffusionUNet2D(
     in_channels=int(data_shape[0]),
     out_channels=int(data_shape[0]),
     num_stations=num_stations,
     station_emb_dim=STATION_EMB_DIM,
+    num_channels=num_channels,
+    channel_emb_dim=CHANNEL_EMB_DIM,
 )
 model.to(DEVICE)
-print(f"Conditioning: metadata (unchanged)")
+print(f"Conditioning: metadata + channel-type embedding (num_channels={num_channels})")
 print(f"Model parameters: {sum(p.numel() for p in model.parameters())/1e6:.1f}M")
 
 noise_scheduler = DDPMScheduler(
@@ -490,6 +512,8 @@ scale_payload = {
     "cond_std": cond_std.tolist(),
     "num_continuous": NUM_CONTINUOUS,
     "station_emb_dim": STATION_EMB_DIM,
+    "num_channels": num_channels,
+    "channel_emb_dim": CHANNEL_EMB_DIM,
     "data_mode": args.data_mode,
     "data_shape": [int(data_shape[0]), int(data_shape[1]), int(data_shape[2])],
     "stft_freq_bins": int(data_shape[1]) if args.data_mode == "stft" else None,
