@@ -980,12 +980,13 @@ class SeismicDemoApp(tk.Tk):
         plots.rowconfigure(0, weight=1)   # map
         plots.rowconfigure(1, weight=2)   # reference row
         plots.rowconfigure(2, weight=2)   # generated row
-        plots.columnconfigure(0, weight=1)  # STFT column
-        plots.columnconfigure(1, weight=2)  # waveform column
+        plots.columnconfigure(0, weight=2)  # STFT column
+        plots.columnconfigure(1, weight=1)  # Fourier spectrum column
+        plots.columnconfigure(2, weight=2)  # waveform column
 
         # ── Map ────────────────────────────────────────────────────────────────
         map_frame = ttk.LabelFrame(plots, text="Marmara Stations & Earthquake", padding=4)
-        map_frame.grid(row=0, column=0, columnspan=2, sticky="nsew", pady=(0, 6))
+        map_frame.grid(row=0, column=0, columnspan=3, sticky="nsew", pady=(0, 6))
 
         self._map_fig, self._map_ax = plt.subplots(figsize=(11, 2.8), facecolor=BG)
         self._style_ax(self._map_ax)
@@ -1009,8 +1010,19 @@ class SeismicDemoApp(tk.Tk):
         self._ref_canvas = FigureCanvasTkAgg(self._ref_fig, ref_frame)
         self._ref_canvas.get_tk_widget().pack(fill="both", expand=True)
 
+        ref_fft_frame = ttk.LabelFrame(plots, text="Reference Spectrum", padding=4)
+        ref_fft_frame.grid(row=1, column=1, sticky="nsew", pady=(0, 6), padx=(0, 6))
+
+        self._ref_fft_fig, self._ref_fft_ax = plt.subplots(figsize=(2.8, 2.8), facecolor=BG)
+        self._ref_fft_fig.subplots_adjust(left=0.18, right=0.97, top=0.90, bottom=0.18)
+        self._style_ax(self._ref_fft_ax)
+        self._ref_fft_ax.set_xlabel("Frequency (Hz)", color=SUBTEXT, fontsize=8)
+        self._ref_fft_ax.set_ylabel("Σ magnitude", color=SUBTEXT, fontsize=8)
+        self._ref_fft_canvas = FigureCanvasTkAgg(self._ref_fft_fig, ref_fft_frame)
+        self._ref_fft_canvas.get_tk_widget().pack(fill="both", expand=True)
+
         ref_wav_frame = ttk.LabelFrame(plots, text="Reference Waveform  (E / N / Z)", padding=4)
-        ref_wav_frame.grid(row=1, column=1, sticky="nsew", pady=(0, 6))
+        ref_wav_frame.grid(row=1, column=2, sticky="nsew", pady=(0, 6))
 
         self._ref_wav_fig, self._ref_wav_axes = plt.subplots(3, 1, figsize=(6, 2.8), facecolor=BG, sharex=True)
         self._ref_wav_fig.subplots_adjust(left=0.06, right=0.99, top=0.95, bottom=0.10, hspace=0.08)
@@ -1035,9 +1047,21 @@ class SeismicDemoApp(tk.Tk):
         self._spec_canvas = FigureCanvasTkAgg(self._spec_fig, spec_frame)
         self._spec_canvas.get_tk_widget().pack(fill="both", expand=True)
 
+        # ── Generated Fourier spectrum ────────────────────────────────────────
+        spec_fft_frame = ttk.LabelFrame(plots, text="Generated Spectrum", padding=4)
+        spec_fft_frame.grid(row=2, column=1, sticky="nsew", padx=(0, 6))
+
+        self._spec_fft_fig, self._spec_fft_ax = plt.subplots(figsize=(2.8, 2.8), facecolor=BG)
+        self._spec_fft_fig.subplots_adjust(left=0.18, right=0.97, top=0.90, bottom=0.18)
+        self._style_ax(self._spec_fft_ax)
+        self._spec_fft_ax.set_xlabel("Frequency (Hz)", color=SUBTEXT, fontsize=8)
+        self._spec_fft_ax.set_ylabel("Σ magnitude", color=SUBTEXT, fontsize=8)
+        self._spec_fft_canvas = FigureCanvasTkAgg(self._spec_fft_fig, spec_fft_frame)
+        self._spec_fft_canvas.get_tk_widget().pack(fill="both", expand=True)
+
         # ── Waveforms ─────────────────────────────────────────────────────────
         wav_frame = ttk.LabelFrame(plots, text="Reconstructed Waveform via Griffin-Lim  (E / N / Z)", padding=4)
-        wav_frame.grid(row=2, column=1, sticky="nsew")
+        wav_frame.grid(row=2, column=2, sticky="nsew")
 
         self._wav_fig, self._wav_axes = plt.subplots(
             3, 1, figsize=(11, 3.8), facecolor=BG, sharex=True)
@@ -1252,6 +1276,25 @@ class SeismicDemoApp(tk.Tk):
         self._ref_fig.suptitle(title, color=TEXT, fontsize=9)
         self._ref_canvas.draw()
 
+    def _draw_fourier_spectrum(self, ax, canvas, spec: np.ndarray, fs: float):
+        """
+        Draw the overall frequency distribution of an event by summing the STFT
+        magnitude over the time axis: spec (3, F, T) -> (3, F), plotted per channel.
+        """
+        ax.cla()
+        self._style_ax(ax)
+        n_freq = spec.shape[1]
+        freqs = np.linspace(0.0, fs / 2.0, num=n_freq)
+        for channel, ch, col in zip(spec, ["E", "N", "Z"], CH_COLS):
+            spectrum = channel.sum(axis=1)   # sum over time bins
+            ax.plot(freqs, spectrum, color=col, lw=0.9, label=ch)
+        ax.set_xlim(freqs[0], freqs[-1])
+        ax.set_xlabel("Frequency (Hz)", color=SUBTEXT, fontsize=8)
+        ax.set_ylabel("Σ magnitude", color=SUBTEXT, fontsize=8)
+        ax.legend(loc="upper right", fontsize=7, facecolor=BG,
+                  edgecolor=OVERLAY, labelcolor=TEXT)
+        canvas.draw()
+
     def _load_reference_data(self, file_path: str):
         """Returns (spec (3,F,T), waves (3,N), sampling_rate)."""
         from obspy import read as obspy_read
@@ -1344,6 +1387,7 @@ class SeismicDemoApp(tk.Tk):
             title = (f"M{m['magnitude']:.1f}  {m.get('location_name', '')}  "
                      f"station={station}  SNR={m.get('snr', 0):.1f}")
             self._draw_reference_stft(spec, title)
+            self._draw_fourier_spectrum(self._ref_fft_ax, self._ref_fft_canvas, spec, sr)
             self._draw_reference_waveform(waves, sr)
         except Exception as exc:
             self._set_status(f"Could not load reference data:\n{exc}", RED)
@@ -1725,6 +1769,9 @@ class SeismicDemoApp(tk.Tk):
             ax.set_ylabel("Freq bins", color=SUBTEXT, fontsize=8)
         self._spec_fig.suptitle(suptitle, color=TEXT, fontsize=9)
         self._spec_canvas.draw()
+
+        # Overall frequency distribution (STFT magnitude summed over time)
+        self._draw_fourier_spectrum(self._spec_fft_ax, self._spec_fft_canvas, spec, FS)
 
         # Only draw waveforms on the final step (when waves is provided)
         if waves is not None:
