@@ -13,6 +13,7 @@ Saves:
   checkpoints/amp_stats.json     — log-std normalization stats needed at inference
 """
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -31,15 +32,39 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from ML.diffusion.model import create_conditioning_vector  # noqa: E402
 from ML.amplitude.model import AmplitudeMLP               # noqa: E402
 
+# ── CLI ──────────────────────────────────────────────────────────────────────
+parser = argparse.ArgumentParser(description="Train amplitude model")
+parser.add_argument(
+    "--use_vs30",
+    action="store_true",
+    help=(
+        "Add the per-station Vs30 (site condition, m/s) as an extra continuous "
+        "feature, matching a diffusion model trained with --use_vs30. Requires the "
+        "station Vs30 lookup and a scale.json that already includes Vs30 stats."
+    ),
+)
+parser.add_argument(
+    "--station_vs30",
+    type=str,
+    default=str(DIFF_DIR / "embeddings" / "station_vs30.json"),
+    help="Path to the station -> Vs30 JSON lookup used when --use_vs30 is set.",
+)
+args = parser.parse_args()
+
 # ── Config ─────────────────────────────────────────────────────────────────────
 NUM_EPOCHS       = 200
 BATCH_SIZE       = 64
 LR               = 1e-3
-NUM_CONTINUOUS   = 6
+# Base continuous features (magnitude, distance, sin/cos azimuth, depth, snr);
+# Vs30 is appended as a 7th continuous feature when --use_vs30 is set.
+NUM_CONTINUOUS   = 7 if args.use_vs30 else 6
 TEST_FRACTION    = 0.1
 CHECKPOINT_EVERY = 20
 DEVICE           = "cuda" if torch.cuda.is_available() else "cpu"
 CHANNEL_NAMES    = ["E", "N", "Z"]
+# AMP_METRIC       = "std"   # per-channel amplitude target: "std" or "max" (max |amplitude|)
+AMP_METRIC       = "max"   # per-channel amplitude target: "std" or "max" (max |amplitude|)
+assert AMP_METRIC in ("std", "max"), f"AMP_METRIC must be 'std' or 'max', got {AMP_METRIC!r}"
 
 # ── Load metadata and conditioning normalization stats ─────────────────────────
 metadatas         = json.load(open(DIFF_DIR / "embeddings/metadata.json"))
@@ -49,7 +74,30 @@ scale             = json.load(open(DIFF_DIR / "embeddings/scale.json"))
 cond_mean = torch.tensor(scale["cond_mean"], dtype=torch.float32)
 cond_std  = torch.tensor(scale["cond_std"],  dtype=torch.float32).clamp(min=1e-8)
 
-raw_cond = torch.stack([create_conditioning_vector(m, station_locations) for m in metadatas])
+station_vs30 = None
+if args.use_vs30:
+    if len(cond_mean) < NUM_CONTINUOUS:
+        raise ValueError(
+            f"--use_vs30 needs Vs30 normalization stats, but scale.json only has "
+            f"{len(cond_mean)} continuous dims. Train the diffusion model with "
+            "--use_vs30 first so scale.json includes the Vs30 stats."
+        )
+    vs30_path = Path(args.station_vs30)
+    if not vs30_path.exists():
+        raise FileNotFoundError(
+            f"Missing {vs30_path}. Run ML/diffusion/compute_station_vs30.py first."
+        )
+    station_vs30 = json.load(open(vs30_path))
+    print(f"[amplitude] Vs30 conditioning enabled ({len(station_vs30)} stations).")
+
+# Use only the leading NUM_CONTINUOUS stats so a longer (Vs30) scale.json stays
+# compatible with a base run and vice versa.
+cond_mean = cond_mean[:NUM_CONTINUOUS]
+cond_std  = cond_std[:NUM_CONTINUOUS]
+
+raw_cond = torch.stack(
+    [create_conditioning_vector(m, station_locations, station_vs30) for m in metadatas]
+)
 cond = raw_cond.clone()
 cond[:, :NUM_CONTINUOUS] = (cond[:, :NUM_CONTINUOUS] - cond_mean) / cond_std
 
@@ -59,7 +107,14 @@ try:
 except ImportError:
     raise RuntimeError("obspy is required: pip install obspy")
 
-print(f"Computing per-channel stds from {len(metadatas)} waveforms…")
+def _channel_metric(data):
+    """Per-channel amplitude statistic selected by AMP_METRIC."""
+    if AMP_METRIC == "max":
+        return float(np.max(np.abs(data)))
+    return float(np.std(data))
+
+
+print(f"Computing per-channel {AMP_METRIC} from {len(metadatas)} waveforms…")
 raw_stds = []
 for m in tqdm(metadatas):
     file_path = Path(m["file_path"])
@@ -72,7 +127,7 @@ for m in tqdm(metadatas):
 
     stream = obspy_read(str(file_path))
     stream.sort(keys=["channel"])
-    raw_stds.append([float(np.std(tr.data.astype(np.float64))) for tr in stream[:3]])
+    raw_stds.append([_channel_metric(tr.data.astype(np.float64)) for tr in stream[:3]])
 
 stds_tensor = torch.tensor(raw_stds, dtype=torch.float32)   # (N, 3)
 log_stds    = torch.log(stds_tensor.clamp(min=1e-10))        # (N, 3)
@@ -86,12 +141,15 @@ ckpt_dir = AMP_DIR / "checkpoints"
 ckpt_dir.mkdir(parents=True, exist_ok=True)
 json.dump(
     {
+        "metric":        AMP_METRIC,
         "log_std_mean":  log_std_mean.tolist(),
         "log_std_scale": log_std_scale.tolist(),
+        "use_vs30":      bool(args.use_vs30),
+        "num_continuous": NUM_CONTINUOUS,
     },
     open(ckpt_dir / "amp_stats.json", "w"),
 )
-print(f"Saved amp_stats.json  (log_std_mean={log_std_mean.tolist()})")
+print(f"Saved amp_stats.json  (metric={AMP_METRIC}  log_std_mean={log_std_mean.tolist()})")
 
 # ── Model ──────────────────────────────────────────────────────────────────────
 num_stations = max(int(m["station_idx"]) for m in metadatas) + 1

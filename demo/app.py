@@ -1644,12 +1644,24 @@ class SeismicDemoApp(tk.Tk):
             )
 
             if self._amp_model is not None:
-                # The amplitude MLP uses the base (non-Vs30) conditioning; pin the
-                # normalised prefix so a Vs30-run scale.json can't leak into the
-                # station_idx tail.
-                cond_vec = create_conditioning_vector(cond_meta, self._station_locations)
+                # The amplitude MLP carries its own num_continuous: >= 7 means it was
+                # trained with Vs30, otherwise it uses the base conditioning. Pin the
+                # normalised prefix to that count so a mismatched scale.json can't leak
+                # into the station_idx tail.
+                amp_nc = int(getattr(self._amp_model, "num_continuous", NUM_CONTINUOUS_BASE))
+                amp_use_vs30 = amp_nc >= 7
+                if amp_use_vs30 and not self._station_vs30:
+                    raise FileNotFoundError(
+                        "The amplitude model was trained with Vs30 conditioning, but "
+                        "embeddings/station_vs30.json is missing.\n"
+                        "Run: python ML/diffusion/compute_station_vs30.py"
+                    )
+                cond_vec = create_conditioning_vector(
+                    cond_meta, self._station_locations,
+                    self._station_vs30 if amp_use_vs30 else None,
+                )
                 cond_norm = self._normalise_cond(
-                    cond_vec, limit=NUM_CONTINUOUS_BASE
+                    cond_vec, limit=amp_nc
                 ).unsqueeze(0).to(DEVICE)
                 with torch.no_grad():
                     raw_pred = self._amp_model(cond_norm).squeeze(0).cpu()

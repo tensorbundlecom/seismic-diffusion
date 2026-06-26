@@ -1,7 +1,7 @@
 from itertools import chain
 import math
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 import torch
 from diffusers import UNet2DConditionModel
@@ -156,7 +156,7 @@ class DiffusionUNet2D:
 def create_conditioning_vector(
     metadata: Dict,
     station_locations: Dict[str, Dict[str, float]],
-    station_vs30: Dict[str, float] = None,
+    station_vs30: Optional[Dict[str, float]] = None,
 ):
     """
     Returns conditioning vector of shape (8,) as:
