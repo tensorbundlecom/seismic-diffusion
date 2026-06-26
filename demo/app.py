@@ -33,7 +33,11 @@ AE   = ML / "autoencoder"
 AMP  = ML / "amplitude"
 sys.path.insert(0, str(ROOT))
 
-from ML.diffusion.model import DiffusionUNet2D, create_conditioning_vector
+from ML.diffusion.model import (
+    DiffusionUNet2D,
+    create_conditioning_vector,
+    NUM_CONTINUOUS as NUM_CONTINUOUS_BASE,  # base continuous count (excl. Vs30)
+)
 from ML.autoencoder.inference import load_model as _load_ae
 from ML.amplitude.model import AmplitudeMLP
 from diffusers import DDPMScheduler
@@ -105,6 +109,22 @@ def _load_station_locations():
     return json.load(open(path))
 
 
+def _load_station_vs30():
+    """
+    Load the optional per-station Vs30 lookup (m/s).
+
+    Only needed for checkpoints trained with --use_vs30. Returns {} when the file
+    is absent so older (non-Vs30) checkpoints keep working unchanged.
+    """
+    path = DIFF / "embeddings" / "station_vs30.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.load(open(path))
+    except Exception:
+        return {}
+
+
 def _get_embeddings_source_checkpoint():
     """Return AE checkpoint used to create embeddings, if recorded."""
     path = DIFF / "embeddings" / "source.json"
@@ -169,16 +189,23 @@ def _load_amplitude_model(device: str = "cpu"):
 
 
 def _make_normalise_cond(scale: dict):
-    """Return a closure that normalises continuous cond dims in-place."""
+    """Return a closure that normalises continuous cond dims in-place.
+
+    ``limit`` clamps how many leading dims are normalised. The diffusion path
+    passes the loaded model's num_continuous so that, if scale.json was written
+    by a different (e.g. Vs30) run than the active checkpoint, we never normalise
+    into the station_idx tail.
+    """
     if "cond_mean" not in scale:
-        return lambda v: v
+        return lambda v, limit=None: v
     mean = torch.tensor(scale["cond_mean"])
     std  = torch.tensor(scale["cond_std"]).clamp(min=1e-8)
-    n    = len(mean)           # NUM_CONTINUOUS = 4
+    n    = len(mean)           # number of continuous dims recorded in scale.json
 
-    def normalise(vec: torch.Tensor) -> torch.Tensor:
+    def normalise(vec: torch.Tensor, limit: int = None) -> torch.Tensor:
         out = vec.clone()
-        out[:n] = (out[:n] - mean) / std
+        k = n if limit is None else max(0, min(n, int(limit)))
+        out[:k] = (out[:k] - mean[:k]) / std[:k]
         return out
     return normalise
 
@@ -507,6 +534,7 @@ def _sample_to_spec(
 @torch.no_grad()
 def generate(diff_unet, ae_model, scheduler, emb_shape,
              normalise_cond, emb_std, station_locations: dict, cond_meta: dict,
+             station_vs30: dict = None,
              step_callback=None, update_every: int = 50,
              griffin_lim_params=None,
              data_mode: str = "latent",
@@ -523,16 +551,28 @@ def generate(diff_unet, ae_model, scheduler, emb_shape,
     """
     if hasattr(diff_unet, "station_embedding"):
         # create_conditioning_vector returns [..continuous.., station_idx, channel_idx].
-        # Keep the channel tail only when the model was trained with a channel embedding.
-        full = create_conditioning_vector(cond_meta, station_locations)
+        # Checkpoints trained with --use_vs30 carry a 7th continuous feature (site
+        # Vs30). num_continuous (restored from the checkpoint) tells us whether to
+        # include it, so older 6-continuous checkpoints keep working unchanged.
         nc = diff_unet.num_continuous
+        use_vs30 = nc >= 7
+        if use_vs30 and not station_vs30:
+            raise FileNotFoundError(
+                "This checkpoint was trained with Vs30 conditioning, but "
+                "embeddings/station_vs30.json is missing.\n"
+                "Run: python ML/diffusion/compute_station_vs30.py"
+            )
+        full = create_conditioning_vector(
+            cond_meta, station_locations, station_vs30 if use_vs30 else None
+        )
         parts = [full[:nc], full[nc:nc + 1]]  # continuous + station_idx
         if getattr(diff_unet, "use_channel", False):
             parts.append(full[nc + 1:nc + 2])  # channel_idx
         cond_vec = torch.cat(parts)
+        cond_norm = normalise_cond(cond_vec, limit=nc).unsqueeze(0).unsqueeze(0).to(DEVICE)
     else:
         cond_vec = _create_legacy_conditioning_vector(cond_meta)
-    cond_norm = normalise_cond(cond_vec).unsqueeze(0).unsqueeze(0).to(DEVICE)
+        cond_norm = normalise_cond(cond_vec).unsqueeze(0).unsqueeze(0).to(DEVICE)
     null_cond = torch.zeros_like(cond_norm)
 
     x = torch.randn(1, *emb_shape, device=DEVICE)
@@ -611,8 +651,9 @@ class SeismicDemoApp(tk.Tk):
         self._emb_mean      = 0.0
         self._data_mode     = "latent"
         self._training_type = "ddpm"
-        self._normalise_cond = lambda v: v
+        self._normalise_cond = lambda v, limit=None: v
         self._station_locations = {}
+        self._station_vs30      = {}   # per-station Vs30 (m/s); only used by Vs30 checkpoints
         self._train_metadatas   = []
         self._val_indices       = []   # held-out (test) indices into _train_metadatas, from scale.json
         self._amp_model      = None
@@ -1090,6 +1131,11 @@ class SeismicDemoApp(tk.Tk):
             self._data_mode      = str(scale.get("data_mode", "latent")).lower()
             self._normalise_cond = _make_normalise_cond(scale)
             self._station_locations = _load_station_locations()
+            self._station_vs30 = _load_station_vs30()
+            if self._station_vs30:
+                print(f"[demo] Loaded Vs30 for {len(self._station_vs30)} stations")
+            else:
+                print("[demo] No station_vs30.json; Vs30-conditioned checkpoints unavailable")
 
             # Held-out split recorded by ML/diffusion/train.py. These index into the
             # same metadata.json the diffusion model was trained on, so they are the
@@ -1587,6 +1633,7 @@ class SeismicDemoApp(tk.Tk):
                 self._emb_shape, self._normalise_cond, self._emb_std,
                 self._station_locations,
                 cond_meta,
+                station_vs30=self._station_vs30,
                 step_callback=on_step,
                 update_every=50,
                 griffin_lim_params=gl_params,
@@ -1597,8 +1644,13 @@ class SeismicDemoApp(tk.Tk):
             )
 
             if self._amp_model is not None:
+                # The amplitude MLP uses the base (non-Vs30) conditioning; pin the
+                # normalised prefix so a Vs30-run scale.json can't leak into the
+                # station_idx tail.
                 cond_vec = create_conditioning_vector(cond_meta, self._station_locations)
-                cond_norm = self._normalise_cond(cond_vec).unsqueeze(0).to(DEVICE)
+                cond_norm = self._normalise_cond(
+                    cond_vec, limit=NUM_CONTINUOUS_BASE
+                ).unsqueeze(0).to(DEVICE)
                 with torch.no_grad():
                     raw_pred = self._amp_model(cond_norm).squeeze(0).cpu()
                 amp_scales = torch.exp(

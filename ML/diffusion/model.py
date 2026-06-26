@@ -153,11 +153,20 @@ class DiffusionUNet2D:
         return wrapper
 
 
-def create_conditioning_vector(metadata: Dict, station_locations: Dict[str, Dict[str, float]]):
+def create_conditioning_vector(
+    metadata: Dict,
+    station_locations: Dict[str, Dict[str, float]],
+    station_vs30: Dict[str, float] = None,
+):
     """
     Returns conditioning vector of shape (8,) as:
     [magnitude, 2d_distance_km, sin(azimuth), cos(azimuth), depth_km, snr,
      station_idx, channel_idx]
+
+    When ``station_vs30`` is provided, the site Vs30 (m/s) is inserted as an extra
+    continuous feature right after snr, giving shape (9,):
+    [..., snr, vs30, station_idx, channel_idx]. It stays inside the leading
+    continuous block so it is z-score normalized alongside the other scalars.
 
     Azimuth is encoded as sin/cos to preserve its circular topology — raw degrees
     would make 1° and 359° appear maximally different after z-score normalization.
@@ -201,17 +210,23 @@ def create_conditioning_vector(metadata: Dict, station_locations: Dict[str, Dict
     )
     azimuth_deg = (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
 
-    continuous = torch.tensor(
-        [
-            float(metadata["magnitude"]),
-            distance_km,
-            math.sin(math.radians(azimuth_deg)),
-            math.cos(math.radians(azimuth_deg)),
-            float(metadata["depth"]),
-            float(metadata["snr"]),
-        ],
-        dtype=torch.float32,
-    )
+    continuous_values = [
+        float(metadata["magnitude"]),
+        distance_km,
+        math.sin(math.radians(azimuth_deg)),
+        math.cos(math.radians(azimuth_deg)),
+        float(metadata["depth"]),
+        float(metadata["snr"]),
+    ]
+    if station_vs30 is not None:
+        if station_name not in station_vs30:
+            raise KeyError(
+                f"Missing Vs30 for station '{station_name}'. "
+                "Generate it first (see compute_station_vs30.py)."
+            )
+        continuous_values.append(float(station_vs30[station_name]))
+
+    continuous = torch.tensor(continuous_values, dtype=torch.float32)
     station_idx = torch.tensor([float(metadata["station_idx"])], dtype=torch.float32)
     channel_idx = torch.tensor([float(metadata.get("channel_idx", 0))], dtype=torch.float32)
-    return torch.cat([continuous, station_idx, channel_idx])  # (8,)
+    return torch.cat([continuous, station_idx, channel_idx])  # (8,) or (9,) with vs30

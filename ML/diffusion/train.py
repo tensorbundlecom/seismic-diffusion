@@ -276,6 +276,21 @@ parser.add_argument(
     help="DataLoader workers (mainly relevant for --data_mode stft).",
 )
 parser.add_argument(
+    "--use_vs30",
+    action="store_true",
+    help=(
+        "Add the per-station Vs30 (site condition, m/s) as an extra continuous "
+        "conditioning feature. Requires the station Vs30 lookup "
+        "(see compute_station_vs30.py)."
+    ),
+)
+parser.add_argument(
+    "--station_vs30",
+    type=str,
+    default="embeddings/station_vs30.json",
+    help="Path to the station -> Vs30 JSON lookup used when --use_vs30 is set.",
+)
+parser.add_argument(
     "--val_fraction",
     type=float,
     default=0.1,
@@ -358,7 +373,9 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 PREDICTION_TARGET = "sample" if args.prediction_target == "x0" else args.prediction_target  # HF scheduler name
 STATION_EMB_DIM = 64
 CHANNEL_EMB_DIM = 16
-NUM_CONTINUOUS = 6
+# Base continuous features: magnitude, 2D distance, sin/cos azimuth, depth, snr.
+# Vs30 (site condition) is appended as a 7th continuous feature when --use_vs30 is set.
+NUM_CONTINUOUS = 7 if args.use_vs30 else 6
 CFG_DROPOUT = 0.15       # fraction of samples per batch trained unconditionally
 CFG_GUIDANCE_SCALE = 3.0 # guidance scale used when logging preview images
 TRAINING_TYPE = args.training_type
@@ -375,7 +392,20 @@ if not station_locations_path.exists():
     )
 station_locations = json.load(open(station_locations_path, "r"))
 
-raw_cond_vectors = torch.stack([create_conditioning_vector(m, station_locations) for m in metadatas])
+station_vs30 = None
+if args.use_vs30:
+    vs30_path = Path(args.station_vs30)
+    if not vs30_path.exists():
+        raise FileNotFoundError(
+            f"Missing {vs30_path}. Run compute_station_vs30.py first to build the "
+            "station -> Vs30 lookup."
+        )
+    station_vs30 = json.load(open(vs30_path, "r"))
+    print(f"[train] Vs30 conditioning enabled ({len(station_vs30)} stations).")
+
+raw_cond_vectors = torch.stack(
+    [create_conditioning_vector(m, station_locations, station_vs30) for m in metadatas]
+)
 cond_mean = raw_cond_vectors[:, :NUM_CONTINUOUS].mean(dim=0)
 cond_std = raw_cond_vectors[:, :NUM_CONTINUOUS].std(dim=0).clamp(min=1e-8)
 cond_vectors = raw_cond_vectors.clone()
@@ -489,11 +519,15 @@ model = DiffusionUNet2D(
     out_channels=int(data_shape[0]),
     num_stations=num_stations,
     station_emb_dim=STATION_EMB_DIM,
+    num_continuous=NUM_CONTINUOUS,
     num_channels=num_channels,
     channel_emb_dim=CHANNEL_EMB_DIM,
 )
 model.to(DEVICE)
-print(f"Conditioning: metadata + channel-type embedding (num_channels={num_channels})")
+print(
+    f"Conditioning: metadata + channel-type embedding (num_channels={num_channels}), "
+    f"num_continuous={NUM_CONTINUOUS}, vs30={'on' if args.use_vs30 else 'off'}"
+)
 print(f"Model parameters: {sum(p.numel() for p in model.parameters())/1e6:.1f}M")
 
 noise_scheduler = DDPMScheduler(
@@ -511,6 +545,7 @@ scale_payload = {
     "cond_mean": cond_mean.tolist(),
     "cond_std": cond_std.tolist(),
     "num_continuous": NUM_CONTINUOUS,
+    "use_vs30": bool(args.use_vs30),
     "station_emb_dim": STATION_EMB_DIM,
     "num_channels": num_channels,
     "channel_emb_dim": CHANNEL_EMB_DIM,
