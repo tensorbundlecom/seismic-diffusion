@@ -168,24 +168,35 @@ def _find_amplitude_checkpoint():
 
 def _load_amplitude_model(device: str = "cpu"):
     """
-    Load AmplitudeMLP and its log-std normalization stats.
-    Returns (model, log_std_mean, log_std_scale) or (None, None, None) if not found.
+    Load AmplitudeMLP and its target normalization stats.
+    Returns (model, stats_dict) or (None, None) if not found. stats_dict holds
+    metric, log_std_mean/scale (waveform amplitude outputs) and, for 6-output
+    checkpoints, gain_mean/scale (STFT inv-log gain outputs).
     """
     ckpt = _find_amplitude_checkpoint()
     stats_path = AMP / "checkpoints" / "amp_stats.json"
     if ckpt is None:
-        return None, None, None
+        return None, None
     try:
         amp_model = AmplitudeMLP.load(str(ckpt), device=device)
         amp_model.eval()
-        stats = json.load(open(stats_path)) if stats_path.exists() else {}
-        log_std_mean = torch.tensor(stats.get("log_std_mean", [0.0, 0.0, 0.0]), dtype=torch.float32)
-        log_std_scale = torch.tensor(stats.get("log_std_scale", [1.0, 1.0, 1.0]), dtype=torch.float32)
-        print(f"[demo] Loaded amplitude model from {ckpt.relative_to(ROOT)}")
-        return amp_model, log_std_mean, log_std_scale
+        raw = json.load(open(stats_path)) if stats_path.exists() else {}
+        stats = {
+            "metric": str(raw.get("metric", "std")),
+            "log_std_mean": torch.tensor(raw.get("log_std_mean", [0.0, 0.0, 0.0]), dtype=torch.float32),
+            "log_std_scale": torch.tensor(raw.get("log_std_scale", [1.0, 1.0, 1.0]), dtype=torch.float32),
+            "gain_mean": torch.tensor(raw["gain_mean"], dtype=torch.float32) if "gain_mean" in raw else None,
+            "gain_scale": torch.tensor(raw["gain_scale"], dtype=torch.float32) if "gain_scale" in raw else None,
+        }
+        has_gain = stats["gain_mean"] is not None and getattr(amp_model, "out_dim", 3) >= 6
+        print(
+            f"[demo] Loaded amplitude model from {ckpt.relative_to(ROOT)} "
+            f"(metric={stats['metric']}, gain_head={'yes' if has_gain else 'no'})"
+        )
+        return amp_model, stats
     except Exception as exc:
         print(f"[demo] Could not load amplitude model: {exc}")
-        return None, None, None
+        return None, None
 
 
 def _make_normalise_cond(scale: dict):
@@ -418,6 +429,19 @@ def _create_legacy_conditioning_vector(cond_meta: dict) -> torch.Tensor:
 
 
 # ── Griffin-Lim reconstruction ───────────────────────────────────────────────
+def _gl_params_for_channel(params, ch: int):
+    """Resolve the per-channel predicted inv-log gain (if any) to the scalar
+    inv_log_gain that griffin_lim_channel expects."""
+    if not params:
+        return params
+    per_ch = params.get("inv_log_gain_per_ch")
+    out = {k: v for k, v in params.items()
+           if k not in ("inv_log_gain_per_ch", "use_predicted_gain")}
+    if per_ch is not None:
+        out["inv_log_gain"] = float(per_ch[ch])
+    return out
+
+
 def griffin_lim_channel(magnitude: np.ndarray, n_iter: int = GRIFFIN_LIM_ITERS, params=None) -> np.ndarray:
     """
     Reconstruct one channel waveform from a magnitude STFT via Griffin-Lim.
@@ -615,7 +639,7 @@ def generate(diff_unet, ae_model, scheduler, emb_shape,
                 is_last = (i == total - 1)
                 if i % update_every == 0 or is_last:
                     spec  = _sample_to_spec(ae_model, x, emb_std=emb_std, emb_mean=emb_mean, data_mode=data_mode)
-                    waves = (np.stack([griffin_lim_channel(spec[ch], params=griffin_lim_params)
+                    waves = (np.stack([griffin_lim_channel(spec[ch], params=_gl_params_for_channel(griffin_lim_params, ch))
                                        for ch in range(3)], axis=0)
                              if is_last else None)
                     step_callback(i + 1, total, spec, waves)
@@ -634,13 +658,13 @@ def generate(diff_unet, ae_model, scheduler, emb_shape,
                 is_last = (i == total - 1)
                 if i % update_every == 0 or is_last:
                     spec  = _sample_to_spec(ae_model, x, emb_std=emb_std, emb_mean=emb_mean, data_mode=data_mode)
-                    waves = (np.stack([griffin_lim_channel(spec[ch], params=griffin_lim_params)
+                    waves = (np.stack([griffin_lim_channel(spec[ch], params=_gl_params_for_channel(griffin_lim_params, ch))
                                        for ch in range(3)], axis=0)
                              if is_last else None)
                     step_callback(i + 1, total, spec, waves)
 
     spec  = _sample_to_spec(ae_model, x, emb_std=emb_std, emb_mean=emb_mean, data_mode=data_mode)
-    waves = np.stack([griffin_lim_channel(spec[ch], params=griffin_lim_params) for ch in range(3)], axis=0)
+    waves = np.stack([griffin_lim_channel(spec[ch], params=_gl_params_for_channel(griffin_lim_params, ch)) for ch in range(3)], axis=0)
     return spec, waves
 
 
@@ -666,8 +690,9 @@ class SeismicDemoApp(tk.Tk):
         self._train_metadatas   = []
         self._val_indices       = []   # held-out (test) indices into _train_metadatas, from scale.json
         self._amp_model      = None
-        self._amp_log_std_mean  = None
-        self._amp_log_std_scale = None
+        self._amp_stats      = None
+        self._latest_pred_gains = None   # per-channel inv-log gains from the last generate
+        self._latest_amp_scales = None   # per-channel waveform scales from the last generate
         self._generating    = False
         self._latest_spec   = None
         self._latest_title  = ""
@@ -874,6 +899,7 @@ class SeismicDemoApp(tk.Tk):
             "inv_log_gain": tk.DoubleVar(value=2.0),
             "noise_gate": tk.BooleanVar(value=False),
             "noise_gate_threshold": tk.DoubleVar(value=0.05),
+            "use_predicted_gain": tk.BooleanVar(value=True),
             "hop_length": tk.IntVar(value=max(1, NPERSEG - NOVERLAP)),
             "win_length": tk.IntVar(value=NPERSEG),
             "n_fft": tk.IntVar(value=NFFT),
@@ -907,6 +933,13 @@ class SeismicDemoApp(tk.Tk):
         )
         ttk.Spinbox(gl_frame, from_=0.0, to=1.0, increment=0.01, width=10,
                     textvariable=self._gl_vars["noise_gate_threshold"]).grid(row=row, column=1, sticky="ew", pady=2)
+        row += 1
+
+        ttk.Checkbutton(
+            gl_frame,
+            text="Predicted Gain (Amp MLP)",
+            variable=self._gl_vars["use_predicted_gain"],
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
         row += 1
 
         ttk.Label(gl_frame, text="Hop Length").grid(row=row, column=0, sticky="w", padx=(0, 6), pady=2)
@@ -1017,6 +1050,7 @@ class SeismicDemoApp(tk.Tk):
             "inv_log_gain": inv_log_gain,
             "noise_gate": noise_gate,
             "noise_gate_threshold": noise_gate_threshold,
+            "use_predicted_gain": bool(self._gl_vars["use_predicted_gain"].get()),
             "hop_length": hop_length,
             "win_length": win_length,
             "n_fft": n_fft,
@@ -1036,6 +1070,10 @@ class SeismicDemoApp(tk.Tk):
             self._set_status(f"Invalid Griffin-Lim params:\n{exc}", RED)
             return
 
+        # Reuse the per-channel gains predicted for the last generated sample.
+        if params.get("use_predicted_gain", True) and self._latest_pred_gains is not None:
+            params["inv_log_gain_per_ch"] = [float(g) for g in self._latest_pred_gains]
+
         spec = np.array(self._latest_spec, copy=True)
         self._gl_recompute_token += 1
         token = self._gl_recompute_token
@@ -1048,9 +1086,21 @@ class SeismicDemoApp(tk.Tk):
     def _recompute_waveforms_worker(self, spec: np.ndarray, params: dict, token: int):
         try:
             waves = np.stack(
-                [griffin_lim_channel(spec[ch], params=params) for ch in range(3)],
+                [griffin_lim_channel(spec[ch], params=_gl_params_for_channel(params, ch)) for ch in range(3)],
                 axis=0,
             )
+            # Re-apply the amplitude scaling from the last generate so Update
+            # Waveform stays in the same physical units as the generated plot.
+            if self._latest_amp_scales is not None and self._amp_stats is not None:
+                metric = self._amp_stats.get("metric", "std")
+                for ch in range(3):
+                    ref = (
+                        float(np.max(np.abs(waves[ch]))) if metric == "max"
+                        else float(np.std(waves[ch]))
+                    )
+                    if ref > 1e-10:
+                        waves[ch] /= ref
+                    waves[ch] *= float(self._latest_amp_scales[ch])
             self.after(0, lambda w=waves, t=token: self._apply_recomputed_waveforms(w, t))
         except Exception as exc:
             self.after(0, lambda: self._set_status(f"Griffin-Lim error:\n{exc}", RED))
@@ -1317,9 +1367,7 @@ class SeismicDemoApp(tk.Tk):
                 f"sample_shape={self._emb_shape}, emb_mean={self._emb_mean:.5f}, emb_std={self._emb_std:.5f}"
             )
 
-            self._amp_model, self._amp_log_std_mean, self._amp_log_std_scale = (
-                _load_amplitude_model(device=DEVICE)
-            )
+            self._amp_model, self._amp_stats = _load_amplitude_model(device=DEVICE)
 
             print(f"[demo] Loaded diffusion checkpoint: {self._rel_to_root(self._diff_ckpt_path)}")
             if self._ae_ckpt_path is not None:
@@ -1666,11 +1714,64 @@ class SeismicDemoApp(tk.Tk):
         self._set_status("Running diffusion…", TEAL)
         threading.Thread(target=self._run_generation, daemon=True).start()
 
+    def _predict_amplitude_and_gain(self, cond_meta):
+        """Run the AmplitudeMLP on the current conditioning.
+
+        Returns (amp_scales, gains): per-channel waveform amplitudes and, for
+        6-output checkpoints, per-channel STFT inv-log gains (else None).
+        """
+        if self._amp_model is None or self._amp_stats is None:
+            return None, None
+        # The amplitude MLP carries its own num_continuous: >= 7 means it was
+        # trained with Vs30, otherwise it uses the base conditioning. Pin the
+        # normalised prefix to that count so a mismatched scale.json can't leak
+        # into the station_idx tail.
+        amp_nc = int(getattr(self._amp_model, "num_continuous", NUM_CONTINUOUS_BASE))
+        amp_use_vs30 = amp_nc >= 7
+        if amp_use_vs30 and not self._station_vs30:
+            raise FileNotFoundError(
+                "The amplitude model was trained with Vs30 conditioning, but "
+                "embeddings/station_vs30.json is missing.\n"
+                "Run: python ML/diffusion/compute_station_vs30.py"
+            )
+        cond_vec = create_conditioning_vector(
+            cond_meta, self._station_locations,
+            self._station_vs30 if amp_use_vs30 else None,
+        )
+        cond_norm = self._normalise_cond(cond_vec, limit=amp_nc).unsqueeze(0).to(DEVICE)
+        with torch.no_grad():
+            raw_pred = self._amp_model(cond_norm).squeeze(0).cpu()
+        amp_scales = torch.exp(
+            raw_pred[:3] * self._amp_stats["log_std_scale"] + self._amp_stats["log_std_mean"]
+        ).numpy()
+        gains = None
+        if (
+            int(getattr(self._amp_model, "out_dim", 3)) >= 6
+            and self._amp_stats.get("gain_mean") is not None
+        ):
+            # Keep predicted gains inside the same range as the manual knob.
+            gains = (
+                raw_pred[3:6] * self._amp_stats["gain_scale"] + self._amp_stats["gain_mean"]
+            ).clamp(0.1, 20.0).numpy()
+        return amp_scales, gains
+
     def _run_generation(self):
         try:
             cond_meta = dict(self._cond_meta_at_generate) if self._cond_meta_at_generate is not None else {}
             suptitle = self._title_at_generate
             gl_params = dict(self._gl_params_at_generate) if self._gl_params_at_generate is not None else {}
+
+            # Predict scales before sampling: the inv-log gains must reach the
+            # Griffin-Lim inversion, which runs inside the sampling pipeline.
+            amp_scales, pred_gains = self._predict_amplitude_and_gain(cond_meta)
+            self._latest_pred_gains = pred_gains
+            self._latest_amp_scales = amp_scales
+            if pred_gains is not None and gl_params.get("use_predicted_gain", True):
+                gl_params["inv_log_gain_per_ch"] = [float(g) for g in pred_gains]
+                print(
+                    f"[demo] Predicted inv-log gains: E={pred_gains[0]:.3f}  "
+                    f"N={pred_gains[1]:.3f}  Z={pred_gains[2]:.3f}"
+                )
 
             def on_step(step, total, spec, waves):
                 pct = int(100 * step / total)
@@ -1694,37 +1795,22 @@ class SeismicDemoApp(tk.Tk):
                 training_type=self._training_type,
             )
 
-            if self._amp_model is not None:
-                # The amplitude MLP carries its own num_continuous: >= 7 means it was
-                # trained with Vs30, otherwise it uses the base conditioning. Pin the
-                # normalised prefix to that count so a mismatched scale.json can't leak
-                # into the station_idx tail.
-                amp_nc = int(getattr(self._amp_model, "num_continuous", NUM_CONTINUOUS_BASE))
-                amp_use_vs30 = amp_nc >= 7
-                if amp_use_vs30 and not self._station_vs30:
-                    raise FileNotFoundError(
-                        "The amplitude model was trained with Vs30 conditioning, but "
-                        "embeddings/station_vs30.json is missing.\n"
-                        "Run: python ML/diffusion/compute_station_vs30.py"
-                    )
-                cond_vec = create_conditioning_vector(
-                    cond_meta, self._station_locations,
-                    self._station_vs30 if amp_use_vs30 else None,
-                )
-                cond_norm = self._normalise_cond(
-                    cond_vec, limit=amp_nc
-                ).unsqueeze(0).to(DEVICE)
-                with torch.no_grad():
-                    raw_pred = self._amp_model(cond_norm).squeeze(0).cpu()
-                amp_scales = torch.exp(
-                    raw_pred * self._amp_log_std_scale + self._amp_log_std_mean
-                ).numpy()
+            if amp_scales is not None:
+                # Normalize by the same statistic the checkpoint predicts
+                # (metric=max: peak amplitude; metric=std: standard deviation).
+                metric = self._amp_stats.get("metric", "std")
                 for ch in range(3):
-                    ch_std = float(np.std(waves[ch]))
-                    if ch_std > 1e-10:
-                        waves[ch] /= ch_std
+                    ref = (
+                        float(np.max(np.abs(waves[ch]))) if metric == "max"
+                        else float(np.std(waves[ch]))
+                    )
+                    if ref > 1e-10:
+                        waves[ch] /= ref
                     waves[ch] *= float(amp_scales[ch])
-                print(f"[demo] Amplitude scaling applied: E={amp_scales[0]:.4g}  N={amp_scales[1]:.4g}  Z={amp_scales[2]:.4g}")
+                print(
+                    f"[demo] Amplitude scaling applied ({metric}): "
+                    f"E={amp_scales[0]:.4g}  N={amp_scales[1]:.4g}  Z={amp_scales[2]:.4g}"
+                )
                 self.after(0, lambda w=waves, title=suptitle: self._live_update(spec, w, title))
 
             self._set_status("Done ✓", GREEN)

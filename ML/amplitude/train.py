@@ -4,13 +4,19 @@ Train the amplitude model.
 Run from ML/amplitude/:
     python train.py
 
-Target: per-channel std of the filtered (not normalized) waveforms.
-At inference the generated waveform is first normalized to unit variance,
-then scaled by the predicted std, so the units match directly.
+Targets (6 per sample):
+  0-2  per-channel AMP_METRIC (max |amplitude| or std) of the processed
+       waveform — resampled to the dataset rate and cropped/padded to the
+       training window, so the units match the Griffin-Lim reconstruction
+       that gets rescaled at inference.
+  3-5  per-channel STFT log-magnitude range log1p|S|.max() - log1p|S|.min(),
+       i.e. the inv-log gain destroyed by the diffusion dataset's per-sample
+       min-max normalization, needed to invert it at inference.
 
 Saves:
   checkpoints/amplitude_mlp.pt   — model weights + config
-  checkpoints/amp_stats.json     — log-std normalization stats needed at inference
+  checkpoints/amp_stats.json     — target normalization stats needed at inference
+  checkpoints/amp_targets.pt     — cached target tensor (waveform pass is slow)
 """
 
 import argparse
@@ -48,6 +54,17 @@ parser.add_argument(
     type=str,
     default=str(DIFF_DIR / "embeddings" / "station_vs30.json"),
     help="Path to the station -> Vs30 JSON lookup used when --use_vs30 is set.",
+)
+parser.add_argument(
+    "--num_workers",
+    type=int,
+    default=8,
+    help="Parallel workers for the waveform/STFT target computation pass.",
+)
+parser.add_argument(
+    "--recompute_targets",
+    action="store_true",
+    help="Ignore the cached target tensor and recompute from waveforms.",
 )
 args = parser.parse_args()
 
@@ -101,11 +118,31 @@ raw_cond = torch.stack(
 cond = raw_cond.clone()
 cond[:, :NUM_CONTINUOUS] = (cond[:, :NUM_CONTINUOUS] - cond_mean) / cond_std
 
-# ── Compute per-channel stds from filtered waveforms ──────────────────────────
+# ── Compute per-channel targets from waveforms ────────────────────────────────
+# Waveform processing (resample, crop/pad, STFT params) must match
+# STFTDataWithMetadataConditionDataset._compute_raw_stft so the gain targets
+# invert exactly the normalization the diffusion data was trained with.
 try:
     from obspy import read as obspy_read
+    from scipy import signal as sp_signal
 except ImportError:
-    raise RuntimeError("obspy is required: pip install obspy")
+    raise RuntimeError("obspy and scipy are required: pip install obspy scipy")
+
+
+def _load_source_stft_config():
+    source_path = DIFF_DIR / "embeddings" / "source.json"
+    defaults = {"nperseg": 256, "noverlap": 192, "nfft": 256,
+                "resample_hz": 100.0, "target_seconds": 70.0}
+    if not source_path.exists():
+        print("[amplitude] embeddings/source.json not found; using default STFT params.")
+        return defaults
+    stft = json.load(open(source_path)).get("stft", {})
+    return {k: type(v)(stft.get(k, v)) for k, v in defaults.items()}
+
+
+STFT_CFG       = _load_source_stft_config()
+TARGET_SAMPLES = int(round(STFT_CFG["resample_hz"] * STFT_CFG["target_seconds"]))
+
 
 def _channel_metric(data):
     """Per-channel amplitude statistic selected by AMP_METRIC."""
@@ -114,9 +151,36 @@ def _channel_metric(data):
     return float(np.std(data))
 
 
-print(f"Computing per-channel {AMP_METRIC} from {len(metadatas)} waveforms…")
-raw_stds = []
-for m in tqdm(metadatas):
+def _compute_targets_for_file(path_str):
+    """Return [amp_E, amp_N, amp_Z, gain_E, gain_N, gain_Z] for one waveform file."""
+    stream = obspy_read(path_str)
+    if len(stream) != 3:
+        raise ValueError(f"Expected 3 traces, got {len(stream)} in {path_str}")
+    stream.sort(keys=["channel"])
+    amps, gains = [], []
+    for trace in stream:
+        if abs(trace.stats.sampling_rate - STFT_CFG["resample_hz"]) > 1e-6:
+            trace.resample(STFT_CFG["resample_hz"])
+        data = trace.data.astype(np.float32)
+        n = TARGET_SAMPLES
+        data = data[:n] if data.shape[0] >= n else np.pad(data, (0, n - data.shape[0]), mode="constant")
+        amps.append(_channel_metric(data))
+        _, _, zxx = sp_signal.stft(
+            data,
+            fs=trace.stats.sampling_rate,
+            nperseg=STFT_CFG["nperseg"],
+            noverlap=STFT_CFG["noverlap"],
+            nfft=STFT_CFG["nfft"],
+            return_onesided=True,
+            boundary="zeros",
+            padded=True,
+        )
+        log_mag = np.log1p(np.abs(zxx))
+        gains.append(float(log_mag.max() - log_mag.min()))
+    return amps + gains
+
+
+def _resolve_path(m):
     file_path = Path(m["file_path"])
     if not file_path.is_absolute():
         candidates = [
@@ -124,40 +188,90 @@ for m in tqdm(metadatas):
             (Path.cwd() / file_path).resolve(),
         ]
         file_path = next((c for c in candidates if c.exists()), candidates[0])
+    return str(file_path)
 
-    stream = obspy_read(str(file_path))
-    stream.sort(keys=["channel"])
-    raw_stds.append([_channel_metric(tr.data.astype(np.float64)) for tr in stream[:3]])
-
-stds_tensor = torch.tensor(raw_stds, dtype=torch.float32)   # (N, 3)
-log_stds    = torch.log(stds_tensor.clamp(min=1e-10))        # (N, 3)
-
-# Normalize targets for stable training.
-log_std_mean  = log_stds.mean(dim=0)
-log_std_scale = log_stds.std(dim=0).clamp(min=1e-8)
-log_stds_norm = (log_stds - log_std_mean) / log_std_scale
 
 ckpt_dir = AMP_DIR / "checkpoints"
 ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+cache_path = ckpt_dir / "amp_targets.pt"
+cache_key  = {"n": len(metadatas), "metric": AMP_METRIC, "stft": STFT_CFG}
+targets    = None
+if cache_path.exists() and not args.recompute_targets:
+    cached = torch.load(cache_path)
+    if cached.get("key") == cache_key:
+        targets = cached["targets"]
+        print(f"Loaded cached targets from {cache_path}")
+    else:
+        print("Target cache is stale; recomputing.")
+
+if targets is None:
+    from concurrent.futures import ProcessPoolExecutor
+
+    file_paths = [_resolve_path(m) for m in metadatas]
+    print(
+        f"Computing per-channel {AMP_METRIC} + STFT log-gain from "
+        f"{len(file_paths)} waveforms ({args.num_workers} workers)…"
+    )
+    with ProcessPoolExecutor(max_workers=args.num_workers) as pool:
+        rows = list(tqdm(
+            pool.map(_compute_targets_for_file, file_paths, chunksize=64),
+            total=len(file_paths),
+        ))
+    targets = torch.tensor(rows, dtype=torch.float32)  # (N, 6)
+    torch.save({"key": cache_key, "targets": targets}, cache_path)
+    print(f"Cached targets to {cache_path}")
+
+amps_tensor  = targets[:, :3]
+gains_tensor = targets[:, 3:]
+log_amps     = torch.log(amps_tensor.clamp(min=1e-10))   # (N, 3)
+
+# The gain is ~log(amplitude) + a spectral-concentration term; report the
+# correlation so we know how much independent signal the gain head carries.
+for i, ch in enumerate(CHANNEL_NAMES):
+    la = log_amps[:, i] - log_amps[:, i].mean()
+    g  = gains_tensor[:, i] - gains_tensor[:, i].mean()
+    corr = (la * g).sum() / (la.norm() * g.norm()).clamp(min=1e-12)
+    print(f"corr(log {AMP_METRIC}, stft log-gain)  channel {ch}: {corr.item():.4f}")
+
+# Normalize targets for stable training. Amplitudes are z-scored in log space;
+# gains are already log-domain quantities, so they are z-scored directly.
+log_std_mean  = log_amps.mean(dim=0)
+log_std_scale = log_amps.std(dim=0).clamp(min=1e-8)
+gain_mean     = gains_tensor.mean(dim=0)
+gain_scale    = gains_tensor.std(dim=0).clamp(min=1e-8)
+targets_norm  = torch.cat(
+    [(log_amps - log_std_mean) / log_std_scale,
+     (gains_tensor - gain_mean) / gain_scale],
+    dim=1,
+)  # (N, 6)
+
 json.dump(
     {
-        "metric":        AMP_METRIC,
-        "log_std_mean":  log_std_mean.tolist(),
-        "log_std_scale": log_std_scale.tolist(),
-        "use_vs30":      bool(args.use_vs30),
+        "metric":         AMP_METRIC,
+        "out_dim":        6,
+        "log_std_mean":   log_std_mean.tolist(),
+        "log_std_scale":  log_std_scale.tolist(),
+        "gain_mean":      gain_mean.tolist(),
+        "gain_scale":     gain_scale.tolist(),
+        "use_vs30":       bool(args.use_vs30),
         "num_continuous": NUM_CONTINUOUS,
+        "stft":           STFT_CFG,
     },
     open(ckpt_dir / "amp_stats.json", "w"),
 )
-print(f"Saved amp_stats.json  (metric={AMP_METRIC}  log_std_mean={log_std_mean.tolist()})")
+print(f"Saved amp_stats.json  (metric={AMP_METRIC}  gain_mean={gain_mean.tolist()})")
 
 # ── Model ──────────────────────────────────────────────────────────────────────
+TARGET_NAMES = CHANNEL_NAMES + [f"gain_{ch}" for ch in CHANNEL_NAMES]
 num_stations = max(int(m["station_idx"]) for m in metadatas) + 1
-model        = AmplitudeMLP(num_stations=num_stations, num_continuous=NUM_CONTINUOUS).to(DEVICE)
+model        = AmplitudeMLP(
+    num_stations=num_stations, num_continuous=NUM_CONTINUOUS, out_dim=len(TARGET_NAMES)
+).to(DEVICE)
 optimizer    = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-2)
 print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}  device={DEVICE}")
 
-dataset  = TensorDataset(cond, log_stds_norm)
+dataset  = TensorDataset(cond, targets_norm)
 n_test   = max(1, int(len(dataset) * TEST_FRACTION))
 n_train  = len(dataset) - n_test
 train_set, test_set = random_split(
@@ -175,7 +289,7 @@ writer = SummaryWriter(log_dir=str(AMP_DIR / "runs/amplitude"))
 def _eval_loss(loader):
     model.eval()
     total_loss = 0.0
-    total_ch   = torch.zeros(3)
+    total_ch   = torch.zeros(len(TARGET_NAMES))
     with torch.no_grad():
         for batch_cond, batch_targets in loader:
             batch_cond    = batch_cond.to(DEVICE)
@@ -189,7 +303,7 @@ def _eval_loss(loader):
 for epoch in range(NUM_EPOCHS):
     model.train()
     epoch_loss = 0.0
-    epoch_ch   = torch.zeros(3)
+    epoch_ch   = torch.zeros(len(TARGET_NAMES))
 
     for batch_cond, batch_targets in train_loader:
         batch_cond    = batch_cond.to(DEVICE)
@@ -211,9 +325,9 @@ for epoch in range(NUM_EPOCHS):
     test_avg, test_ch = _eval_loss(test_loader)
 
     writer.add_scalars("Loss/total", {"train": train_avg, "test": test_avg}, epoch)
-    for i, ch in enumerate(CHANNEL_NAMES):
+    for i, name in enumerate(TARGET_NAMES):
         writer.add_scalars(
-            f"Loss/channel_{ch}",
+            f"Loss/target_{name}",
             {"train": train_ch[i].item(), "test": test_ch[i].item()},
             epoch,
         )
@@ -224,7 +338,7 @@ for epoch in range(NUM_EPOCHS):
         print(
             f"Epoch {epoch + 1}/{NUM_EPOCHS}  "
             f"train={train_avg:.6f}  test={test_avg:.6f}  "
-            + "  ".join(f"{ch}={test_ch[i]:.6f}" for i, ch in enumerate(CHANNEL_NAMES))
+            + "  ".join(f"{name}={test_ch[i]:.6f}" for i, name in enumerate(TARGET_NAMES))
         )
 
 writer.close()
