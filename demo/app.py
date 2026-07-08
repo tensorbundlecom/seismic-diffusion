@@ -59,13 +59,13 @@ CHANNEL_TO_IDX = {name: idx for idx, name in enumerate(CHANNEL_NAMES)}
 NUM_TRAIN_TIMESTEPS = 1000
 FS      = 100.0   # Hz  (HH-channel sampling rate)
 WAVEFORM_DISPLAY_SECONDS = 70.0
-NPERSEG = 256
-NOVERLAP= 192
-NFFT    = 256
+NPERSEG = 50
+NOVERLAP= 40
+NFFT    = 64
 FREQ_BINS = NFFT // 2 + 1
 DEVICE  = "cuda" if torch.cuda.is_available() else "cpu"
-GRIFFIN_LIM_ITERS = 400
-GRIFFIN_LIM_MOMENTUM = 0.9
+GRIFFIN_LIM_ITERS = 200
+GRIFFIN_LIM_MOMENTUM = 0.99
 GRIFFIN_LIM_WINDOW = "hann"
 GRIFFIN_LIM_CENTER = True
 GRIFFIN_LIM_RANDOM_STATE = 0
@@ -438,6 +438,8 @@ def griffin_lim_channel(magnitude: np.ndarray, n_iter: int = GRIFFIN_LIM_ITERS, 
         "random_state": GRIFFIN_LIM_RANDOM_STATE,
         "length": None,
         "inv_log_gain": 1.0,
+        "noise_gate": False,
+        "noise_gate_threshold": 0.05,
     }
     if params is not None:
         cfg.update(params)
@@ -450,13 +452,20 @@ def griffin_lim_channel(magnitude: np.ndarray, n_iter: int = GRIFFIN_LIM_ITERS, 
     cfg["center"] = bool(cfg["center"])
     cfg["momentum"] = float(np.clip(float(cfg["momentum"]), 0.0, 0.999))
     cfg["inv_log_gain"] = float(np.clip(float(cfg["inv_log_gain"]), 0.1, 20.0))
+    cfg["noise_gate"] = bool(cfg["noise_gate"])
+    cfg["noise_gate_threshold"] = float(np.clip(float(cfg["noise_gate_threshold"]), 0.0, 1.0))
     if cfg.get("random_state", None) is not None:
         cfg["random_state"] = int(cfg["random_state"])
 
     # Invert the per-sample log1p normalization that SeismicSTFTDataset applies.
     # Exact per-sample min/max are unavailable at inference, so expose a scalar
     # gain in log-domain before expm1 as a practical calibration knob.
-    mag = np.expm1(np.clip(magnitude, 0.0, None).astype(np.float64) * cfg["inv_log_gain"])
+    mag = np.clip(magnitude, 0.0, None).astype(np.float64)
+    if cfg["noise_gate"]:
+        # Soft-threshold in the log domain: the model's residual noise floor in
+        # quiet bins would otherwise be amplified by expm1 into broadband noise.
+        mag = np.clip(mag - cfg["noise_gate_threshold"], 0.0, None)
+    mag = np.expm1(mag * cfg["inv_log_gain"])
     # Make Griffin-Lim robust to custom STFT freq-bin counts from stft-mode training.
     expected_n_fft = max(2, int((mag.shape[0] - 1) * 2))
     if cfg["n_fft"] != expected_n_fft:
@@ -464,6 +473,19 @@ def griffin_lim_channel(magnitude: np.ndarray, n_iter: int = GRIFFIN_LIM_ITERS, 
         cfg["win_length"] = min(cfg["win_length"], cfg["n_fft"])
         cfg["hop_length"] = min(cfg["hop_length"], cfg["n_fft"] - 1)
         cfg["hop_length"] = max(1, cfg["hop_length"])
+
+    # The STFT time axis was downsampled to target_time_bins for the autoencoder, so
+    # the incoming spectrogram has far fewer frames than the native STFT. Griffin-Lim
+    # inverts with the true per-frame hop, so these decimated frames would reconstruct
+    # only a fraction of the real duration (and with too little inter-frame overlap).
+    # Upsample the time axis back to the native frame count so the waveform spans the
+    # full window and the frames overlap enough for a clean reconstruction.
+    target_samples = int(round(FS * WAVEFORM_DISPLAY_SECONDS))
+    native_frames = int(round(target_samples / cfg["hop_length"])) + 1
+    if native_frames > mag.shape[1] > 1:
+        x_old = np.linspace(0.0, 1.0, mag.shape[1])
+        x_new = np.linspace(0.0, 1.0, native_frames)
+        mag = np.stack([np.interp(x_new, x_old, row) for row in mag], axis=0)
 
     gl_kwargs = dict(
         n_iter=cfg["n_iter"],
@@ -539,14 +561,12 @@ def generate(diff_unet, ae_model, scheduler, emb_shape,
              griffin_lim_params=None,
              data_mode: str = "latent",
              emb_mean: float = 0.0,
-             guidance_scale: float = 1.0,
              training_type: str = "ddpm"):
     """
     Full pipeline: conditioning → diffusion sampling → VAE decode → Griffin-Lim.
 
     step_callback(step, total, spec, waves_or_None) is called every `update_every`
     steps and always on the very last step (waves is only provided then).
-    guidance_scale > 1 enables classifier-free guidance.
     training_type: 'ddpm' uses DDPM scheduler; 'flow_matching' uses Euler ODE (100 steps).
     """
     if hasattr(diff_unet, "station_embedding"):
@@ -573,22 +593,11 @@ def generate(diff_unet, ae_model, scheduler, emb_shape,
     else:
         cond_vec = _create_legacy_conditioning_vector(cond_meta)
         cond_norm = normalise_cond(cond_vec).unsqueeze(0).unsqueeze(0).to(DEVICE)
-    null_cond = torch.zeros_like(cond_norm)
 
     x = torch.randn(1, *emb_shape, device=DEVICE)
     diff_unet.eval()
 
     def _pred(x_, t_):
-        if guidance_scale != 1.0:
-            x_in = torch.cat([x_, x_])
-            t_in = torch.cat([t_, t_])
-            c_in = torch.cat([null_cond, cond_norm])
-            if hasattr(diff_unet, "station_embedding"):
-                preds = diff_unet.forward(x_in, t_in, c_in).sample
-            else:
-                preds = diff_unet(x_in, t_in, encoder_hidden_states=c_in).sample
-            u, c = preds.chunk(2)
-            return u + guidance_scale * (c - u)
         if hasattr(diff_unet, "station_embedding"):
             return diff_unet.forward(x_, t_, cond_norm).sample
         return diff_unet(x_, t_, encoder_hidden_states=cond_norm).sample
@@ -813,7 +822,6 @@ class SeismicDemoApp(tk.Tk):
             ("Longitude",        "lon", MARMARA_LON_MIN, MARMARA_LON_MAX, 28.00, ".3f"),
             ("Depth  (km)",      "dep",      0.0,  29.7,  10.0,  ".1f"),
             ("SNR",              "snr",      1.0,  30.0,   5.0,  ".1f"),
-            ("Guidance Scale",   "cfg",      1.0,  10.0,   3.0,  ".1f"),
         ]
         self._svars = {}
         for label, key, lo, hi, default, fmt in sliders:
@@ -861,17 +869,21 @@ class SeismicDemoApp(tk.Tk):
         gl_frame.columnconfigure(1, weight=1)
 
         self._gl_vars = {
-            "n_iter": tk.IntVar(value=900),
-            "momentum": tk.DoubleVar(value=0.95),
+            "n_iter": tk.IntVar(value=GRIFFIN_LIM_ITERS),
+            "momentum": tk.DoubleVar(value=GRIFFIN_LIM_MOMENTUM),
             "inv_log_gain": tk.DoubleVar(value=2.0),
-            "hop_length": tk.IntVar(value=64),
-            "win_length": tk.IntVar(value=1024),
-            "n_fft": tk.IntVar(value=1024),
-            "window": tk.StringVar(value="bartlett"),
+            "noise_gate": tk.BooleanVar(value=False),
+            "noise_gate_threshold": tk.DoubleVar(value=0.05),
+            "hop_length": tk.IntVar(value=max(1, NPERSEG - NOVERLAP)),
+            "win_length": tk.IntVar(value=NPERSEG),
+            "n_fft": tk.IntVar(value=NFFT),
+            "window": tk.StringVar(value=GRIFFIN_LIM_WINDOW),
             "center": tk.BooleanVar(value=GRIFFIN_LIM_CENTER),
             "random_state": tk.IntVar(value=GRIFFIN_LIM_RANDOM_STATE),
             "use_length": tk.BooleanVar(value=False),
             "length": tk.IntVar(value=0),
+            "fix_time_axis": tk.BooleanVar(value=True),
+            "display_upsample": tk.IntVar(value=1),
         }
 
         row = 0
@@ -888,6 +900,13 @@ class SeismicDemoApp(tk.Tk):
         ttk.Label(gl_frame, text="Inv-Log Gain").grid(row=row, column=0, sticky="w", padx=(0, 6), pady=2)
         ttk.Spinbox(gl_frame, from_=0.1, to=20.0, increment=0.1, width=10,
                     textvariable=self._gl_vars["inv_log_gain"]).grid(row=row, column=1, sticky="ew", pady=2)
+        row += 1
+
+        ttk.Checkbutton(gl_frame, text="Noise Gate", variable=self._gl_vars["noise_gate"]).grid(
+            row=row, column=0, sticky="w", padx=(0, 6), pady=2
+        )
+        ttk.Spinbox(gl_frame, from_=0.0, to=1.0, increment=0.01, width=10,
+                    textvariable=self._gl_vars["noise_gate_threshold"]).grid(row=row, column=1, sticky="ew", pady=2)
         row += 1
 
         ttk.Label(gl_frame, text="Hop Length").grid(row=row, column=0, sticky="w", padx=(0, 6), pady=2)
@@ -928,6 +947,18 @@ class SeismicDemoApp(tk.Tk):
         )
         row += 1
 
+        ttk.Checkbutton(
+            gl_frame,
+            text="Fix Time Axis (70 s)",
+            variable=self._gl_vars["fix_time_axis"],
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
+        row += 1
+
+        ttk.Label(gl_frame, text="Output Density ×N").grid(row=row, column=0, sticky="w", padx=(0, 6), pady=2)
+        ttk.Spinbox(gl_frame, from_=1, to=32, increment=1, width=10,
+                    textvariable=self._gl_vars["display_upsample"]).grid(row=row, column=1, sticky="ew", pady=2)
+        row += 1
+
         ttk.Label(gl_frame, text="Length").grid(row=row, column=0, sticky="w", padx=(0, 6), pady=2)
         ttk.Spinbox(gl_frame, from_=0, to=200000, increment=1, width=10,
                     textvariable=self._gl_vars["length"]).grid(row=row, column=1, sticky="ew", pady=2)
@@ -940,7 +971,19 @@ class SeismicDemoApp(tk.Tk):
         self._gl_update_btn.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
     def _sync_griffin_lim_defaults_from_stft(self):
-        pass
+        """Align Griffin-Lim STFT geometry with the loaded analysis STFT.
+
+        hop_length/win_length/n_fft/window MUST match the forward STFT or the
+        reconstruction is wrong, so drive them from the globals set by
+        _apply_ae_stft_config on checkpoint load rather than leaving fixed
+        UI values that silently disagree.
+        """
+        if not hasattr(self, "_gl_vars"):
+            return
+        self._gl_vars["hop_length"].set(max(1, NPERSEG - NOVERLAP))
+        self._gl_vars["win_length"].set(NPERSEG)
+        self._gl_vars["n_fft"].set(NFFT)
+        self._gl_vars["window"].set(GRIFFIN_LIM_WINDOW)
 
     def _get_griffin_lim_params_from_ui(self) -> dict:
         if not hasattr(self, "_gl_vars"):
@@ -949,6 +992,8 @@ class SeismicDemoApp(tk.Tk):
         n_iter = max(1, int(self._gl_vars["n_iter"].get()))
         momentum = float(np.clip(float(self._gl_vars["momentum"].get()), 0.0, 0.999))
         inv_log_gain = float(np.clip(float(self._gl_vars["inv_log_gain"].get()), 0.1, 20.0))
+        noise_gate = bool(self._gl_vars["noise_gate"].get())
+        noise_gate_threshold = float(np.clip(float(self._gl_vars["noise_gate_threshold"].get()), 0.0, 1.0))
         hop_length = max(1, int(self._gl_vars["hop_length"].get()))
         win_length = max(1, int(self._gl_vars["win_length"].get()))
         n_fft = max(2, int(self._gl_vars["n_fft"].get()))
@@ -970,6 +1015,8 @@ class SeismicDemoApp(tk.Tk):
             "n_iter": n_iter,
             "momentum": momentum,
             "inv_log_gain": inv_log_gain,
+            "noise_gate": noise_gate,
+            "noise_gate_threshold": noise_gate_threshold,
             "hop_length": hop_length,
             "win_length": win_length,
             "n_fft": n_fft,
@@ -1058,7 +1105,7 @@ class SeismicDemoApp(tk.Tk):
         self._ref_fft_fig.subplots_adjust(left=0.18, right=0.97, top=0.90, bottom=0.18)
         self._style_ax(self._ref_fft_ax)
         self._ref_fft_ax.set_xlabel("Frequency (Hz)", color=SUBTEXT, fontsize=8)
-        self._ref_fft_ax.set_ylabel("Σ magnitude", color=SUBTEXT, fontsize=8)
+        self._ref_fft_ax.set_ylabel("Mean magnitude", color=SUBTEXT, fontsize=8)
         self._ref_fft_canvas = FigureCanvasTkAgg(self._ref_fft_fig, ref_fft_frame)
         self._ref_fft_canvas.get_tk_widget().pack(fill="both", expand=True)
 
@@ -1096,7 +1143,7 @@ class SeismicDemoApp(tk.Tk):
         self._spec_fft_fig.subplots_adjust(left=0.18, right=0.97, top=0.90, bottom=0.18)
         self._style_ax(self._spec_fft_ax)
         self._spec_fft_ax.set_xlabel("Frequency (Hz)", color=SUBTEXT, fontsize=8)
-        self._spec_fft_ax.set_ylabel("Σ magnitude", color=SUBTEXT, fontsize=8)
+        self._spec_fft_ax.set_ylabel("Mean magnitude", color=SUBTEXT, fontsize=8)
         self._spec_fft_canvas = FigureCanvasTkAgg(self._spec_fft_fig, spec_fft_frame)
         self._spec_fft_canvas.get_tk_widget().pack(fill="both", expand=True)
 
@@ -1332,11 +1379,16 @@ class SeismicDemoApp(tk.Tk):
         n_freq = spec.shape[1]
         freqs = np.linspace(0.0, fs / 2.0, num=n_freq)
         for channel, ch, col in zip(spec, ["E", "N", "Z"], CH_COLS):
-            spectrum = channel.sum(axis=1)   # sum over time bins
+            # Average (not sum) over time so the curve is invariant to the number of
+            # STFT time bins. The reference STFT is computed at native resolution
+            # (~600-700 bins with the current small hop) while the generated spec has
+            # only target_time_bins (128); summing would make the reference ~5x higher
+            # purely from the bin-count difference, not from real spectral content.
+            spectrum = channel.mean(axis=1)   # mean over time bins
             ax.plot(freqs, spectrum, color=col, lw=0.9, label=ch)
         ax.set_xlim(freqs[0], freqs[-1])
         ax.set_xlabel("Frequency (Hz)", color=SUBTEXT, fontsize=8)
-        ax.set_ylabel("Σ magnitude", color=SUBTEXT, fontsize=8)
+        ax.set_ylabel("Mean magnitude", color=SUBTEXT, fontsize=8)
         ax.legend(loc="upper right", fontsize=7, facecolor=BG,
                   edgecolor=OVERLAY, labelcolor=TEXT)
         canvas.draw()
@@ -1639,7 +1691,6 @@ class SeismicDemoApp(tk.Tk):
                 griffin_lim_params=gl_params,
                 data_mode=self._data_mode,
                 emb_mean=self._emb_mean,
-                guidance_scale=float(self._svars["cfg"].get()),
                 training_type=self._training_type,
             )
 
@@ -1687,15 +1738,35 @@ class SeismicDemoApp(tk.Tk):
 
     # ── Plot updates ──────────────────────────────────────────────────────────
     def _draw_waveforms(self, waves: np.ndarray):
-        # Keep the displayed time axis fixed to 70 s regardless of reconstruction params/length.
-        t = np.linspace(0.0, WAVEFORM_DISPLAY_SECONDS, num=waves.shape[1], endpoint=False)
+        # When "Fix Time Axis" is on, stretch whatever samples we get across a fixed 70 s.
+        # When off, plot the real reconstructed duration (n_samples / FS), so changing the
+        # Griffin-Lim hop length is reflected as an actual change in the number of time steps.
+        fix_axis = True
+        upsample = 1
+        if hasattr(self, "_gl_vars"):
+            if "fix_time_axis" in self._gl_vars:
+                fix_axis = bool(self._gl_vars["fix_time_axis"].get())
+            if "display_upsample" in self._gl_vars:
+                upsample = max(1, int(self._gl_vars["display_upsample"].get()))
+
+        # "Output Density ×N": interpolate the reconstructed waveform to N× the sample
+        # count for a smoother, denser-looking trace over the SAME real duration.
+        # This raises the effective sample rate for display only; it adds no new
+        # information and is independent of the Griffin-Lim hop length.
+        if upsample > 1 and waves.shape[1] > 1:
+            waves = sp_signal.resample(waves, waves.shape[1] * upsample, axis=1)
+
+        n_samples = waves.shape[1]
+        effective_fs = FS * upsample
+        duration = WAVEFORM_DISPLAY_SECONDS if fix_axis else (n_samples / effective_fs)
+        t = np.linspace(0.0, duration, num=n_samples, endpoint=False)
         for ax, wave, ch, col in zip(self._wav_axes, waves, ["E", "N", "Z"], CH_COLS):
             ax.cla()
             self._style_ax(ax)
             ax.plot(t, wave, color=col, lw=0.8)
             ax.axhline(0, color=SUBTEXT, lw=0.5, ls="--")
             ax.set_ylabel(ch, color=TEXT, fontsize=9)
-            ax.set_xlim(0.0, WAVEFORM_DISPLAY_SECONDS)
+            ax.set_xlim(0.0, duration)
         self._wav_axes[-1].set_xlabel("Time (s)", color=TEXT, fontsize=9)
         self._wav_canvas.draw()
 

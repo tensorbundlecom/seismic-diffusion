@@ -207,6 +207,14 @@ class PhaseNetPerceptualLoss(nn.Module):
 
     def _phasenet_features(self, waveform: torch.Tensor) -> torch.Tensor:
         """Run frozen PhaseNet and return a tensor suitable for feature matching."""
+        # PhaseNet's U-Net requires a fixed input length (in_samples, e.g. 3001 for
+        # STEAD); the proxy-waveform length depends on the STFT params (hop, time bins),
+        # so resample the time axis to match before the forward pass.
+        target_len = getattr(self.phasenet, "in_samples", None)
+        if target_len is not None and waveform.shape[-1] != target_len:
+            waveform = F.interpolate(
+                waveform, size=int(target_len), mode="linear", align_corners=False
+            )
         output = self.phasenet(waveform)
         tensor = self._extract_first_tensor(output)
         if tensor is None:

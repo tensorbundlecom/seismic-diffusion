@@ -376,8 +376,6 @@ CHANNEL_EMB_DIM = 16
 # Base continuous features: magnitude, 2D distance, sin/cos azimuth, depth, snr.
 # Vs30 (site condition) is appended as a 7th continuous feature when --use_vs30 is set.
 NUM_CONTINUOUS = 7 if args.use_vs30 else 6
-CFG_DROPOUT = 0.15       # fraction of samples per batch trained unconditionally
-CFG_GUIDANCE_SCALE = 3.0 # guidance scale used when logging preview images
 TRAINING_TYPE = args.training_type
 VAL_EVERY_N_EPOCHS = int(args.val_every_n_epochs)
 
@@ -630,7 +628,6 @@ def _log_preview_images(log_step: int, epoch: int):
         num_continuous=NUM_CONTINUOUS,
         data_mean=data_mean,
         data_std=data_std,
-        guidance_scale=CFG_GUIDANCE_SCALE,
         training_type=TRAINING_TYPE,
     )
     if args.data_mode == "latent":
@@ -655,7 +652,6 @@ def _log_preview_images(log_step: int, epoch: int):
         num_continuous=NUM_CONTINUOUS,
         data_mean=data_mean,
         data_std=data_std,
-        guidance_scale=CFG_GUIDANCE_SCALE,
         training_type=TRAINING_TYPE,
     )
     if args.data_mode == "latent":
@@ -751,11 +747,6 @@ for epoch in range(NUM_EPOCHS):
     for batch_data, batch_cond in tqdm(dataloader, desc=f"Epoch {epoch + 1}/{NUM_EPOCHS}"):
         batch_data = batch_data.to(DEVICE)
         batch_cond = batch_cond.to(DEVICE)
-
-        # CFG: randomly zero-out each sample's conditioning independently
-        if CFG_DROPOUT > 0:
-            drop = torch.rand(batch_data.shape[0], 1, device=DEVICE) < CFG_DROPOUT
-            batch_cond = batch_cond.masked_fill(drop, 0.0)
 
         step_lr = _lr_for_step(global_step)
         for pg in optimizer.param_groups:

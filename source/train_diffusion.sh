@@ -1,0 +1,1 @@
+python train.py --prediction_target x0 --data_mode latent --log_images_every_n_batches 1000 --use_vs30
