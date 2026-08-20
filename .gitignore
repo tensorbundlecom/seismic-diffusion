@@ -23,3 +23,5 @@ ML/amplitude/checkpoints/amp_stats.json
 ML/diffusion/runs/
 VS30/
 *.npz
+ML/diffusion/wandb/
+.kilo/

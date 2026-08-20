@@ -14,6 +14,7 @@ from torch.optim import AdamW
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils import generate, decode_embedding
+import wandb
 
 
 class STFTDataWithMetadataConditionDataset(Dataset):
@@ -270,10 +271,47 @@ parser.add_argument(
     ),
 )
 parser.add_argument(
+    "--experiment_name",
+    type=str,
+    default=None,
+    help=(
+        "Optional name for this experiment. When set, checkpoints are saved under "
+        "checkpoints/<training_type>/<experiment_name>/ and TensorBoard logs under "
+        "the corresponding named run."
+    ),
+)
+parser.add_argument(
+    "--use_wandb",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help=(
+        "Log metrics, config, and generated previews to Weights & Biases "
+        "(default: enabled). Use --no-use_wandb to disable."
+    ),
+)
+parser.add_argument(
+    "--wandb_project",
+    type=str,
+    default="seismic-diffusion",
+    help="wandb project name to log runs under.",
+)
+parser.add_argument(
+    "--wandb_entity",
+    type=str,
+    default=None,
+    help="wandb entity/username (defaults to your logged-in account).",
+)
+parser.add_argument(
     "--num_workers",
     type=int,
     default=4,
     help="DataLoader workers (mainly relevant for --data_mode stft).",
+)
+parser.add_argument(
+    "--num_epochs",
+    type=int,
+    default=500,
+    help="Number of training epochs (default: 500).",
 )
 parser.add_argument(
     "--use_vs30",
@@ -282,6 +320,15 @@ parser.add_argument(
         "Add the per-station Vs30 (site condition, m/s) as an extra continuous "
         "conditioning feature. Requires the station Vs30 lookup "
         "(see compute_station_vs30.py)."
+    ),
+)
+parser.add_argument(
+    "--include_station_id",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help=(
+        "Condition the diffusion model on a learned per-station ID embedding "
+        "(default: enabled). Use --no-include_station_id to omit station IDs."
     ),
 )
 parser.add_argument(
@@ -362,13 +409,16 @@ parser.add_argument(
 args = parser.parse_args()
 
 # --- Config ---
-NUM_EPOCHS = 500
+NUM_EPOCHS = int(args.num_epochs)
+if NUM_EPOCHS <= 0:
+    raise ValueError(f"--num_epochs must be positive; got {NUM_EPOCHS}.")
 BATCH_SIZE = 32
 LR = 1e-4
 NUM_TRAIN_TIMESTEPS = 1000
 BETA_START = 1e-4
 BETA_END = 0.02
 CHECKPOINT_EVERY_N_EPOCHS = 1
+MIN_LR_RATIO = 0.1
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 PREDICTION_TARGET = "sample" if args.prediction_target == "x0" else args.prediction_target  # HF scheduler name
 STATION_EMB_DIM = 64
@@ -379,7 +429,69 @@ NUM_CONTINUOUS = 7 if args.use_vs30 else 6
 TRAINING_TYPE = args.training_type
 VAL_EVERY_N_EPOCHS = int(args.val_every_n_epochs)
 
-writer = SummaryWriter(log_dir=f"runs/diffusion_{args.data_mode}_{TRAINING_TYPE}")
+if args.experiment_name is not None:
+    EXPERIMENT_NAME = args.experiment_name.strip()
+    if not EXPERIMENT_NAME:
+        raise ValueError("--experiment_name must not be empty.")
+    if Path(EXPERIMENT_NAME).name != EXPERIMENT_NAME or EXPERIMENT_NAME in {".", ".."}:
+        raise ValueError("--experiment_name must be a single directory name (no path separators).")
+else:
+    EXPERIMENT_NAME = None
+
+CHECKPOINT_ROOT = Path("checkpoints") / TRAINING_TYPE
+TENSORBOARD_LOG_DIR = Path("runs") / f"diffusion_{args.data_mode}_{TRAINING_TYPE}"
+if EXPERIMENT_NAME is not None:
+    CHECKPOINT_ROOT /= EXPERIMENT_NAME
+    TENSORBOARD_LOG_DIR /= EXPERIMENT_NAME
+
+writer = SummaryWriter(log_dir=str(TENSORBOARD_LOG_DIR))
+print(f"[train] experiment={EXPERIMENT_NAME or 'default'}, tensorboard={TENSORBOARD_LOG_DIR}")
+
+wb = None
+if args.use_wandb:
+    run_name = EXPERIMENT_NAME or f"diffusion_{args.data_mode}_{TRAINING_TYPE}"
+    wb = wandb.init(
+        project=args.wandb_project,
+        entity=args.wandb_entity,
+        name=run_name,
+        config={
+            "training_type": TRAINING_TYPE,
+            "diffusion_mode": args.training_type,
+            "prediction_target": args.prediction_target,
+            "hf_prediction_type": PREDICTION_TARGET,
+            "data_mode": args.data_mode,
+            "experiment_name": EXPERIMENT_NAME,
+            "all_cli_args": vars(args),
+            "batch_size": BATCH_SIZE,
+            "lr": LR,
+            "weight_decay": 1e-2,
+            "min_lr_ratio": MIN_LR_RATIO,
+            "num_train_timesteps": NUM_TRAIN_TIMESTEPS,
+            "beta_start": BETA_START,
+            "beta_end": BETA_END,
+            "num_continuous": NUM_CONTINUOUS,
+            "station_emb_dim": STATION_EMB_DIM,
+            "channel_emb_dim": CHANNEL_EMB_DIM,
+            "device": DEVICE,
+            "include_station_id": bool(args.include_station_id),
+            "use_vs30": bool(args.use_vs30),
+            "num_workers": args.num_workers,
+            "num_epochs": NUM_EPOCHS,
+            "val_fraction": float(args.val_fraction),
+            "split_seed": int(args.split_seed),
+            "val_every_n_epochs": VAL_EVERY_N_EPOCHS,
+            "stft_stats_samples": int(args.stft_stats_samples),
+            "stft_freq_bins": int(args.stft_freq_bins),
+            "stft_time_bins": int(args.stft_time_bins),
+            "log_images_every_n_batches": args.log_images_every_n_batches,
+            "checkpoint_every_n_batches": args.checkpoint_every_n_batches,
+            "keep_last_batch_checkpoints": args.keep_last_batch_checkpoints,
+            "station_vs30": args.station_vs30,
+            "wandb_project": args.wandb_project,
+            "wandb_entity": args.wandb_entity,
+        },
+    )
+    print(f"[train] wandb tracking: {wb.project}/{wb.id} ({wb.name})")
 
 # --- Shared metadata conditioning ---
 metadatas = json.load(open("embeddings/metadata.json", "r"))
@@ -402,7 +514,15 @@ if args.use_vs30:
     print(f"[train] Vs30 conditioning enabled ({len(station_vs30)} stations).")
 
 raw_cond_vectors = torch.stack(
-    [create_conditioning_vector(m, station_locations, station_vs30) for m in metadatas]
+    [
+        create_conditioning_vector(
+            m,
+            station_locations,
+            station_vs30,
+            include_station_id=args.include_station_id,
+        )
+        for m in metadatas
+    ]
 )
 cond_mean = raw_cond_vectors[:, :NUM_CONTINUOUS].mean(dim=0)
 cond_std = raw_cond_vectors[:, :NUM_CONTINUOUS].std(dim=0).clamp(min=1e-8)
@@ -510,13 +630,14 @@ if val_dataset is not None and len(val_dataset) > 0:
     )
 
 # --- Model & Scheduler ---
-num_stations = max(int(m["station_idx"]) for m in metadatas) + 1
+num_stations = max(int(m["station_idx"]) for m in metadatas) + 1 if args.include_station_id else 0
 num_channels = max(int(m.get("channel_idx", 0)) for m in metadatas) + 1
 model = DiffusionUNet2D(
     in_channels=int(data_shape[0]),
     out_channels=int(data_shape[0]),
     num_stations=num_stations,
     station_emb_dim=STATION_EMB_DIM,
+    include_station_id=args.include_station_id,
     num_continuous=NUM_CONTINUOUS,
     num_channels=num_channels,
     channel_emb_dim=CHANNEL_EMB_DIM,
@@ -524,6 +645,7 @@ model = DiffusionUNet2D(
 model.to(DEVICE)
 print(
     f"Conditioning: metadata + channel-type embedding (num_channels={num_channels}), "
+    f"station_id={'on' if args.include_station_id else 'off'}, "
     f"num_continuous={NUM_CONTINUOUS}, vs30={'on' if args.use_vs30 else 'off'}"
 )
 print(f"Model parameters: {sum(p.numel() for p in model.parameters())/1e6:.1f}M")
@@ -544,10 +666,12 @@ scale_payload = {
     "cond_std": cond_std.tolist(),
     "num_continuous": NUM_CONTINUOUS,
     "use_vs30": bool(args.use_vs30),
+    "include_station_id": bool(args.include_station_id),
     "station_emb_dim": STATION_EMB_DIM,
     "num_channels": num_channels,
     "channel_emb_dim": CHANNEL_EMB_DIM,
     "data_mode": args.data_mode,
+    "experiment_name": EXPERIMENT_NAME,
     "data_shape": [int(data_shape[0]), int(data_shape[1]), int(data_shape[2])],
     "stft_freq_bins": int(data_shape[1]) if args.data_mode == "stft" else None,
     "stft_time_bins": int(data_shape[2]) if args.data_mode == "stft" else None,
@@ -557,11 +681,25 @@ scale_payload = {
     "val_indices": val_indices,
 }
 json.dump(scale_payload, open("embeddings/scale.json", "w"))
+if wb is not None:
+    wb.config.update(
+        {
+            "data_shape": scale_payload["data_shape"],
+            "emb_mean": float(data_mean),
+            "emb_std": float(data_std),
+            "num_train": len(train_indices),
+            "num_val": len(val_indices),
+            "num_stations": num_stations,
+            "num_channels": num_channels,
+            "stft_freq_bins_resolved": scale_payload.get("stft_freq_bins"),
+            "stft_time_bins_resolved": scale_payload.get("stft_time_bins"),
+            "total_train_steps": NUM_EPOCHS * max(1, len(dataloader)),
+        }
+    )
 
 optimizer = AdamW(model.parameters(), lr=LR, weight_decay=1e-2)
 
 # Per-step LR schedule — warmup is capped at 10% of total steps so short runs aren't hurt
-MIN_LR_RATIO = 0.1
 STEPS_PER_EPOCH = max(1, len(dataloader))
 TOTAL_TRAIN_STEPS = NUM_EPOCHS * STEPS_PER_EPOCH
 WARMUP_STEPS = min(200, max(TOTAL_TRAIN_STEPS // 10, 0))
@@ -636,9 +774,11 @@ def _log_preview_images(log_step: int, epoch: int):
         vis_real = gen_real
     _print_data_stats(f"real_cond step={log_step}", vis_real, epoch)
     writer.add_image("Generation/real_cond", _normalise_for_tb_image(vis_real), log_step)
+    ims = {"Generation/real_cond": wandb.Image(_normalise_for_tb_image(vis_real))}
     if fixed_real_stft is not None:
         _print_data_stats(f"real_stft step={log_step}", fixed_real_stft, epoch)
         writer.add_image("Generation/real_stft", _normalise_for_tb_image(fixed_real_stft), log_step)
+        ims["Generation/real_stft"] = wandb.Image(_normalise_for_tb_image(fixed_real_stft))
 
     gen_rand = generate(
         fixed_rand_cond,
@@ -660,10 +800,13 @@ def _log_preview_images(log_step: int, epoch: int):
         vis_rand = gen_rand
     _print_data_stats(f"rand_cond step={log_step}", vis_rand, epoch)
     writer.add_image("Generation/rand_cond", _normalise_for_tb_image(vis_rand), log_step)
+    ims["Generation/rand_cond"] = wandb.Image(_normalise_for_tb_image(vis_rand))
+    if wb is not None:
+        wb.log(ims, step=log_step)
 
 
 def _save_checkpoint(ckpt_name: str):
-    ckpt_path = Path("checkpoints") / TRAINING_TYPE / ckpt_name
+    ckpt_path = CHECKPOINT_ROOT / ckpt_name
     ckpt_path.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(str(ckpt_path))
     noise_scheduler.save_pretrained(str(ckpt_path))
@@ -671,11 +814,13 @@ def _save_checkpoint(ckpt_name: str):
         {
             "data_mode": args.data_mode,
             "training_type": TRAINING_TYPE,
+            "experiment_name": EXPERIMENT_NAME,
             "data_shape": [int(data_shape[0]), int(data_shape[1]), int(data_shape[2])],
             "emb_mean": float(data_mean),
             "emb_std": float(data_std),
             "num_continuous": NUM_CONTINUOUS,
             "station_emb_dim": STATION_EMB_DIM,
+            "include_station_id": bool(args.include_station_id),
             "stft_freq_bins": int(data_shape[1]) if args.data_mode == "stft" else None,
             "stft_time_bins": int(data_shape[2]) if args.data_mode == "stft" else None,
         },
@@ -686,7 +831,7 @@ def _save_checkpoint(ckpt_name: str):
 
 def _cleanup_checkpoints(pattern: str, keep: int):
     keep = max(1, int(keep))
-    all_ckpts = sorted((Path("checkpoints") / TRAINING_TYPE).glob(pattern), key=lambda p: p.stat().st_mtime)
+    all_ckpts = sorted(CHECKPOINT_ROOT.glob(pattern), key=lambda p: p.stat().st_mtime)
     for old in all_ckpts[:-keep]:
         shutil.rmtree(old)
 
@@ -761,6 +906,8 @@ for epoch in range(NUM_EPOCHS):
         global_step += 1
 
         epoch_loss += loss.item()
+        if wb is not None:
+            wb.log({"Loss/train_step": loss.item(), "lr": step_lr}, step=global_step)
         if args.log_images_every_n_batches > 0 and (global_step % args.log_images_every_n_batches == 0):
             _log_preview_images(global_step, epoch)
             model.train()
@@ -775,6 +922,8 @@ for epoch in range(NUM_EPOCHS):
     print(f"Epoch {epoch + 1}/{NUM_EPOCHS} - Loss: {avg_loss:.6f}  LR: {current_lr:.2e}")
     writer.add_scalar("Loss/train", avg_loss, epoch)
     writer.add_scalar("LR", current_lr, epoch)
+    if wb is not None:
+        wb.log({"Loss/train": avg_loss, "lr": current_lr}, step=((epoch + 1) * len(dataloader)))
 
     if (
         val_dataloader is not None
@@ -784,6 +933,8 @@ for epoch in range(NUM_EPOCHS):
         val_loss = _evaluate(val_dataloader)
         print(f"Epoch {epoch + 1}/{NUM_EPOCHS} - Val Loss: {val_loss:.6f}")
         writer.add_scalar("Loss/val", val_loss, epoch)
+        if wb is not None:
+            wb.log({"Loss/val": val_loss}, step=((epoch + 1) * len(dataloader)))
 
     if (epoch + 1) % CHECKPOINT_EVERY_N_EPOCHS == 0:
         _save_checkpoint(f"epoch_{epoch + 1}")
@@ -791,6 +942,9 @@ for epoch in range(NUM_EPOCHS):
 
 # --- Save model ---
 writer.close()
-model.save_pretrained(f"checkpoints/{TRAINING_TYPE}/unet2d")
-noise_scheduler.save_pretrained(f"checkpoints/{TRAINING_TYPE}/unet2d")
-print(f"Model saved to checkpoints/{TRAINING_TYPE}/unet2d")
+if wb is not None:
+    wb.finish()
+final_model_path = CHECKPOINT_ROOT / "unet2d"
+model.save_pretrained(str(final_model_path))
+noise_scheduler.save_pretrained(str(final_model_path))
+print(f"Model saved to {final_model_path}")
