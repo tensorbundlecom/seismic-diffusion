@@ -180,6 +180,7 @@ def _resolve_diffusion_normalization(training_config: dict) -> dict:
         "mode": spec.mode,
         "global_min": spec.global_min,
         "global_max": spec.global_max,
+        "amplitude_epsilon": spec.amplitude_epsilon,
         "source": spec.source_origin,
         "spec": spec,
     }
@@ -381,24 +382,14 @@ def _read_diffusion_training_config(diff_ckpt: Path):
 def _find_latest_diffusion_checkpoint():
     """
     Return latest diffusion checkpoint dir by mtime.
-    Searches type-specific subdirs (ddpm/, flow_matching/) then legacy top-level dirs.
+    Checkpoints may be nested below a type/experiment directory, for example
+    ``checkpoints/ddpm/physical_sid/step_4000``.
     """
     ckpt_root = DIFF / "checkpoints"
     if not ckpt_root.exists():
         return None, None
 
-    candidates = []
-    for type_name in ("ddpm", "flow_matching"):
-        type_root = ckpt_root / type_name
-        if type_root.exists():
-            for p in type_root.iterdir():
-                if p.is_dir() and (p / "config.json").exists():
-                    candidates.append(p)
-    for p in ckpt_root.iterdir():
-        if not p.is_dir() or p.name in ("ddpm", "flow_matching"):
-            continue
-        if (p / "config.json").exists():
-            candidates.append(p)
+    candidates = [path.parent for path in ckpt_root.rglob("config.json")]
 
     if not candidates:
         return None, None
@@ -407,14 +398,11 @@ def _find_latest_diffusion_checkpoint():
 
 
 def _find_latest_checkpoint_by_type(training_type: str):
-    """Find latest checkpoint in checkpoints/{training_type}/ subfolder."""
+    """Find latest checkpoint recursively below checkpoints/{training_type}/."""
     ckpt_root = DIFF / "checkpoints" / training_type
     if not ckpt_root.exists():
         return None, None
-    candidates = [
-        p for p in ckpt_root.iterdir()
-        if p.is_dir() and (p / "config.json").exists()
-    ]
+    candidates = [path.parent for path in ckpt_root.rglob("config.json")]
     if not candidates:
         return None, None
     latest = max(candidates, key=lambda p: p.stat().st_mtime)
@@ -425,24 +413,17 @@ def _list_diffusion_checkpoints():
     """
     Return a list of (label, Path) for every available diffusion checkpoint,
     newest first. Labels are 'ddpm/epoch_44', 'flow_matching/step_5200', or the
-    bare dir name for legacy top-level checkpoints.
+    their path relative to ``ML/diffusion/checkpoints``. This retains nested
+    experiment names such as ``ddpm/physical_sid/step_4000``.
     """
     ckpt_root = DIFF / "checkpoints"
     if not ckpt_root.exists():
         return []
 
-    items = []
-    for type_name in ("ddpm", "flow_matching"):
-        type_root = ckpt_root / type_name
-        if type_root.exists():
-            for p in type_root.iterdir():
-                if p.is_dir() and (p / "config.json").exists():
-                    items.append((f"{type_name}/{p.name}", p))
-    for p in ckpt_root.iterdir():
-        if not p.is_dir() or p.name in ("ddpm", "flow_matching"):
-            continue
-        if (p / "config.json").exists():
-            items.append((p.name, p))
+    items = [
+        (str(path.parent.relative_to(ckpt_root)), path.parent)
+        for path in ckpt_root.rglob("config.json")
+    ]
 
     items.sort(key=lambda kv: kv[1].stat().st_mtime, reverse=True)
     return items
@@ -453,7 +434,7 @@ def _find_compatible_diffusion_checkpoint(latent_channels: int):
     Pick latest diffusion checkpoint whose in/out channels match AE latent size.
     Returns (ckpt_path, config_dict) or (None, None).
     """
-    diff_ckpts = sorted((DIFF / "checkpoints").glob("epoch_*"))
+    diff_ckpts = sorted(path.parent for path in (DIFF / "checkpoints").rglob("config.json"))
     for ckpt in reversed(diff_ckpts):
         cfg = _read_diffusion_unet_config(ckpt)
         if cfg is None:
@@ -579,6 +560,7 @@ def griffin_lim_channel(magnitude: np.ndarray, n_iter: int = GRIFFIN_LIM_ITERS, 
         "normalization_mode": "per_event",
         "global_min": None,
         "global_max": None,
+        "amplitude_epsilon": 1.0,
         "reconstruction_spec": None,
         "noise_gate": False,
         "noise_gate_threshold": 0.05,
@@ -615,13 +597,21 @@ def griffin_lim_channel(magnitude: np.ndarray, n_iter: int = GRIFFIN_LIM_ITERS, 
             raise ValueError("Global normalization requires global_min and global_max.") from exc
         if not np.isfinite(global_min) or not np.isfinite(global_max) or global_max <= global_min:
             raise ValueError("Invalid global normalization bounds.")
+        try:
+            epsilon = float(cfg.get("amplitude_epsilon", 1.0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Global normalization requires a positive amplitude_epsilon.") from exc
+        if not np.isfinite(epsilon) or epsilon <= 0.0:
+            raise ValueError("Global normalization requires a positive amplitude_epsilon.")
         if cfg["noise_gate"]:
-            # Gate after restoring physical log magnitude but before expm1.
+            # Gate after restoring physical log magnitude. The final clamp is
+            # in linear magnitude space because physical-unit log magnitudes
+            # may legitimately be negative.
             # This is intentionally not the exact inverse: noise gating is an
             # optional reconstruction adjustment, while the no-gate path below
             # uses the shared exact inverse unchanged.
             log_mag = mag * (global_max - global_min) + global_min
-            mag = np.expm1(np.maximum(log_mag - cfg["noise_gate_threshold"], 0.0))
+            mag = np.maximum(np.exp(log_mag - cfg["noise_gate_threshold"]) - epsilon, 0.0)
         else:
             reconstruction_spec = cfg.get("reconstruction_spec")
             if reconstruction_spec is not None:
@@ -629,7 +619,8 @@ def griffin_lim_channel(magnitude: np.ndarray, n_iter: int = GRIFFIN_LIM_ITERS, 
                 # exact global inverse identical everywhere.
                 mag = decoded_to_magnitude(mag, reconstruction_spec)
             else:
-                mag = np.expm1(np.maximum(mag * (global_max - global_min) + global_min, 0.0))
+                log_mag = mag * (global_max - global_min) + global_min
+                mag = np.maximum(np.exp(log_mag) - epsilon, 0.0)
     else:
         mag = np.clip(mag, 0.0, None)
         if cfg["noise_gate"]:
@@ -837,6 +828,7 @@ class SeismicDemoApp(tk.Tk):
         self._data_mode     = "latent"
         self._training_type = "ddpm"
         self._normalization = {"mode": "per_event", "global_min": None, "global_max": None,
+                               "amplitude_epsilon": 1.0,
                                "source": "legacy default"}
         self._normalise_cond = lambda v, limit=None: v
         self._station_name_to_idx = {name: i for i, name in enumerate(STATION_NAMES)}
@@ -1228,6 +1220,7 @@ class SeismicDemoApp(tk.Tk):
             "normalization_mode": self._normalization["mode"],
             "global_min": self._normalization["global_min"],
             "global_max": self._normalization["global_max"],
+            "amplitude_epsilon": self._normalization.get("amplitude_epsilon", 1.0),
             "reconstruction_spec": self._normalization.get("spec"),
             "hop_length": hop_length,
             "win_length": win_length,
@@ -1668,7 +1661,11 @@ class SeismicDemoApp(tk.Tk):
                 boundary="zeros",
                 padded=True,
             )
-            mag = np.log1p(np.abs(zxx))
+            if self._normalization.get("mode") == "global":
+                epsilon = float(self._normalization.get("amplitude_epsilon", 1.0))
+                mag = np.log(np.abs(zxx) + epsilon)
+            else:
+                mag = np.log1p(np.abs(zxx))
             if self._normalization.get("mode") == "global":
                 global_min = float(self._normalization["global_min"])
                 global_max = float(self._normalization["global_max"])

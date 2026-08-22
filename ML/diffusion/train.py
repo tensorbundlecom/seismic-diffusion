@@ -47,6 +47,7 @@ def _validate_embedding_source(source: Any) -> Dict[str, Any]:
     """Validate the export contract needed to train safely from latent embeddings."""
     if not isinstance(source, dict):
         raise ValueError(f"{SOURCE_PATH} must contain a JSON object.")
+    source = dict(source)
 
     required = ("ae_checkpoint", "stft", "normalization_mode", "num_embeddings", "embedding_shape")
     missing = [key for key in required if key not in source]
@@ -70,11 +71,26 @@ def _validate_embedding_source(source: Any) -> Dict[str, Any]:
             raise ValueError(
                 f"{SOURCE_PATH}: global normalization requires numeric global_min/global_max."
             ) from exc
-        if not math.isfinite(global_min) or not math.isfinite(global_max) or global_max < global_min:
+        if not math.isfinite(global_min) or not math.isfinite(global_max) or global_max <= global_min:
             raise ValueError(
                 f"{SOURCE_PATH}: invalid global normalization bounds "
                 f"({global_min}, {global_max})."
             )
+
+    # Exports created before the physical-unit log transform used log1p,
+    # exactly equivalent to log(magnitude + 1).
+    try:
+        amplitude_epsilon = float(source.get("amplitude_epsilon", 1.0))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{SOURCE_PATH}: amplitude_epsilon must be a positive finite number."
+        ) from exc
+    if not math.isfinite(amplitude_epsilon) or amplitude_epsilon <= 0.0:
+        raise ValueError(
+            f"{SOURCE_PATH}: invalid amplitude_epsilon={amplitude_epsilon!r}."
+        )
+    source["normalization_mode"] = mode
+    source["amplitude_epsilon"] = amplitude_epsilon
 
     try:
         count = int(source["num_embeddings"])
@@ -939,10 +955,12 @@ embedding_provenance = {
     "normalization_mode": embedding_source["normalization_mode"],
     "global_min": embedding_source.get("global_min"),
     "global_max": embedding_source.get("global_max"),
+    "amplitude_epsilon": embedding_source["amplitude_epsilon"],
     "normalization": {
         "mode": embedding_source["normalization_mode"],
         "global_min": embedding_source.get("global_min"),
         "global_max": embedding_source.get("global_max"),
+        "amplitude_epsilon": embedding_source["amplitude_epsilon"],
     },
     "stft": embedding_source["stft"],
     "channels": embedding_source.get("channels"),

@@ -3,6 +3,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 import json
+import math
 import re
 
 import torch
@@ -16,6 +17,14 @@ from tqdm import tqdm
 from model import ConditionalVariationalAutoencoder
 from stft_dataset_with_metadata import SeismicSTFTDatasetWithMetadata, collate_fn_with_metadata
 from normalization_cache import fit_or_load_global_normalization
+
+
+def _positive_finite_float(value):
+    """Argparse type for strictly positive finite floating-point values."""
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise argparse.ArgumentTypeError("expected a finite value greater than zero")
+    return parsed
 
 
 def _named_run_directories(args):
@@ -563,6 +572,15 @@ def parse_args():
     parser.add_argument('--global_normalization', action='store_true',
                         help='Normalize all log-scaled spectrograms with min/max fitted on the training split. '
                              'Default is per-event normalization.')
+    parser.add_argument(
+        '--amplitude_epsilon',
+        type=_positive_finite_float,
+        default=1e-12,
+        help=(
+            'Positive magnitude floor used by log(magnitude + epsilon). The value '
+            'is saved with the normalization contract; legacy checkpoints imply 1.0.'
+        ),
+    )
     
     # Model arguments
     parser.add_argument('--latent_dim', type=int, default=256,
@@ -642,6 +660,7 @@ def main():
         nfft=args.nfft,
         normalize=True,
         log_scale=True,
+        amplitude_epsilon=args.amplitude_epsilon,
         global_normalization=args.global_normalization,
         magnitude_col=args.magnitude_col,
     )

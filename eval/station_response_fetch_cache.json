@@ -1,0 +1,1565 @@
+{
+  "requests": {
+    "KO|ADVT||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1993
+    },
+    "KO|ADVT||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1993
+    },
+    "KO|ADVT||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1993
+    },
+    "KO|AKS||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 21
+    },
+    "KO|AKS||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 21
+    },
+    "KO|AKS||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 21
+    },
+    "KO|ALT||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|ALT||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|ALT||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|ARMT||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3666
+    },
+    "KO|ARMT||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3666
+    },
+    "KO|ARMT||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3666
+    },
+    "KO|ARMT||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 133
+    },
+    "KO|ARMT||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 133
+    },
+    "KO|ARMT||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 133
+    },
+    "KO|ASYA||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 13
+    },
+    "KO|ASYA||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 13
+    },
+    "KO|ASYA||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 13
+    },
+    "KO|AVCI||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 211
+    },
+    "KO|AVCI||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 211
+    },
+    "KO|AVCI||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 211
+    },
+    "KO|BALB||EHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 423
+    },
+    "KO|BALB||EHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 423
+    },
+    "KO|BALB||EHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 423
+    },
+    "KO|BALB||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 692
+    },
+    "KO|BALB||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 692
+    },
+    "KO|BALB||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 692
+    },
+    "KO|BALB||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 382
+    },
+    "KO|BALB||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 382
+    },
+    "KO|BALB||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 382
+    },
+    "KO|BGKT||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2050
+    },
+    "KO|BGKT||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2050
+    },
+    "KO|BGKT||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2050
+    },
+    "KO|BIGA||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1520
+    },
+    "KO|BIGA||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1520
+    },
+    "KO|BIGA||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1520
+    },
+    "KO|BLCB||BHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|BLCB||BHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|BLCB||BHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|BMYO||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 65
+    },
+    "KO|BMYO||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 65
+    },
+    "KO|BMYO||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 65
+    },
+    "KO|BUYK||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 24
+    },
+    "KO|BUYK||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 24
+    },
+    "KO|BUYK||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 24
+    },
+    "KO|CAND||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3
+    },
+    "KO|CAND||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3
+    },
+    "KO|CAND||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3
+    },
+    "KO|CANM||EHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 740
+    },
+    "KO|CANM||EHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 740
+    },
+    "KO|CANM||EHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 740
+    },
+    "KO|CANM||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1883
+    },
+    "KO|CANM||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1883
+    },
+    "KO|CANM||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1883
+    },
+    "KO|CAVI||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1042
+    },
+    "KO|CAVI||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1042
+    },
+    "KO|CAVI||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1042
+    },
+    "KO|CRLT||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 795
+    },
+    "KO|CRLT||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 795
+    },
+    "KO|CRLT||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 795
+    },
+    "KO|CRLU||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 132
+    },
+    "KO|CRLU||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 132
+    },
+    "KO|CRLU||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 132
+    },
+    "KO|CTKS||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2450
+    },
+    "KO|CTKS||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2450
+    },
+    "KO|CTKS||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2450
+    },
+    "KO|CTYL||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1108
+    },
+    "KO|CTYL||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1108
+    },
+    "KO|CTYL||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1108
+    },
+    "KO|CTYL||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 222
+    },
+    "KO|CTYL||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 222
+    },
+    "KO|CTYL||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 222
+    },
+    "KO|DKL||BHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 208
+    },
+    "KO|DKL||BHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 208
+    },
+    "KO|DKL||BHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 208
+    },
+    "KO|DKL||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 22
+    },
+    "KO|DKL||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 22
+    },
+    "KO|DKL||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 22
+    },
+    "KO|DST||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 480
+    },
+    "KO|DST||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 480
+    },
+    "KO|DST||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 480
+    },
+    "KO|EDC||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 4690
+    },
+    "KO|EDC||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 4690
+    },
+    "KO|EDC||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 4690
+    },
+    "KO|EDC||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1899
+    },
+    "KO|EDC||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1899
+    },
+    "KO|EDC||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1899
+    },
+    "KO|EDRB||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 45
+    },
+    "KO|EDRB||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 45
+    },
+    "KO|EDRB||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 45
+    },
+    "KO|ENEZ||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2479
+    },
+    "KO|ENEZ||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2479
+    },
+    "KO|ENEZ||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2479
+    },
+    "KO|ENZZ||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 209
+    },
+    "KO|ENZZ||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 209
+    },
+    "KO|ENZZ||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 209
+    },
+    "KO|ERIK||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3820
+    },
+    "KO|ERIK||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3820
+    },
+    "KO|ERIK||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3820
+    },
+    "KO|ESKT||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2
+    },
+    "KO|ESKT||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2
+    },
+    "KO|ESKT||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2
+    },
+    "KO|ESKY||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 472
+    },
+    "KO|ESKY||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 472
+    },
+    "KO|ESKY||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 472
+    },
+    "KO|EZNE||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 259
+    },
+    "KO|EZNE||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 259
+    },
+    "KO|EZNE||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 259
+    },
+    "KO|EZN||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2124
+    },
+    "KO|EZN||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2124
+    },
+    "KO|EZN||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2124
+    },
+    "KO|FOCM||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2
+    },
+    "KO|FOCM||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2
+    },
+    "KO|FOCM||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2
+    },
+    "KO|GADA||BHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 707
+    },
+    "KO|GADA||BHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 707
+    },
+    "KO|GADA||BHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 707
+    },
+    "KO|GADA||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1505
+    },
+    "KO|GADA||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1505
+    },
+    "KO|GADA||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1505
+    },
+    "KO|GAZK||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1763
+    },
+    "KO|GAZK||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1763
+    },
+    "KO|GAZK||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1763
+    },
+    "KO|GEDZ||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 11
+    },
+    "KO|GEDZ||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 11
+    },
+    "KO|GEDZ||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 11
+    },
+    "KO|GELI||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 4371
+    },
+    "KO|GELI||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 4371
+    },
+    "KO|GELI||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 4371
+    },
+    "KO|GEML||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1374
+    },
+    "KO|GEML||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1374
+    },
+    "KO|GEML||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1374
+    },
+    "KO|GEMT||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 951
+    },
+    "KO|GEMT||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 951
+    },
+    "KO|GEMT||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 951
+    },
+    "KO|GOKC||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 34
+    },
+    "KO|GOKC||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 34
+    },
+    "KO|GOKC||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 34
+    },
+    "KO|GOMA||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3
+    },
+    "KO|GOMA||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3
+    },
+    "KO|GOMA||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3
+    },
+    "KO|GONE||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2696
+    },
+    "KO|GONE||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2696
+    },
+    "KO|GONE||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2696
+    },
+    "KO|GORD||EHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 39
+    },
+    "KO|GORD||EHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 39
+    },
+    "KO|GORD||EHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 39
+    },
+    "KO|GORD||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 60
+    },
+    "KO|GORD||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 60
+    },
+    "KO|GORD||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 60
+    },
+    "KO|GPA||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 104
+    },
+    "KO|GPA||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 104
+    },
+    "KO|GPA||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 104
+    },
+    "KO|GPNR||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 106
+    },
+    "KO|GPNR||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 106
+    },
+    "KO|GPNR||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 106
+    },
+    "KO|GULT||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 291
+    },
+    "KO|GULT||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 291
+    },
+    "KO|GULT||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 291
+    },
+    "KO|GUZE||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 252
+    },
+    "KO|GUZE||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 252
+    },
+    "KO|GUZE||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 252
+    },
+    "KO|HRTX||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2069
+    },
+    "KO|HRTX||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2069
+    },
+    "KO|HRTX||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2069
+    },
+    "KO|ISK||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3283
+    },
+    "KO|ISK||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3283
+    },
+    "KO|ISK||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3283
+    },
+    "KO|IZI||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 525
+    },
+    "KO|IZI||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 525
+    },
+    "KO|IZI||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 525
+    },
+    "KO|KAVV||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2630
+    },
+    "KO|KAVV||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2630
+    },
+    "KO|KAVV||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2630
+    },
+    "KO|KAVV||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1485
+    },
+    "KO|KAVV||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1485
+    },
+    "KO|KAVV||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1485
+    },
+    "KO|KCTX||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2960
+    },
+    "KO|KCTX||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2960
+    },
+    "KO|KCTX||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2960
+    },
+    "KO|KCTX||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 629
+    },
+    "KO|KCTX||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 629
+    },
+    "KO|KCTX||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 629
+    },
+    "KO|KHMN||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|KHMN||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|KHMN||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|KIYI||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 40
+    },
+    "KO|KIYI||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 40
+    },
+    "KO|KIYI||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 40
+    },
+    "KO|KIZO||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|KIZO||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|KIZO||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|KLYT||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2234
+    },
+    "KO|KLYT||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2234
+    },
+    "KO|KLYT||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2234
+    },
+    "KO|KMRS||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2
+    },
+    "KO|KMRS||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2
+    },
+    "KO|KMRS||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2
+    },
+    "KO|KOUK||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 316
+    },
+    "KO|KOUK||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 316
+    },
+    "KO|KOUK||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 316
+    },
+    "KO|KOZT||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|KOZT||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|KOZT||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|KRBG||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 4194
+    },
+    "KO|KRBG||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 4194
+    },
+    "KO|KRBG||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 4194
+    },
+    "KO|KRBG||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1664
+    },
+    "KO|KRBG||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1664
+    },
+    "KO|KRBG||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1664
+    },
+    "KO|KRTL||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 220
+    },
+    "KO|KRTL||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 220
+    },
+    "KO|KRTL||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 220
+    },
+    "KO|KULA||BHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2
+    },
+    "KO|KULA||BHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2
+    },
+    "KO|KULA||BHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2
+    },
+    "KO|KUMB||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 174
+    },
+    "KO|KUMB||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 174
+    },
+    "KO|KUMB||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 174
+    },
+    "KO|LAPK||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 361
+    },
+    "KO|LAPK||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 361
+    },
+    "KO|LAPK||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 361
+    },
+    "KO|LAP||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3441
+    },
+    "KO|LAP||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3441
+    },
+    "KO|LAP||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3441
+    },
+    "KO|MAEG||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 284
+    },
+    "KO|MAEG||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 284
+    },
+    "KO|MAEG||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 284
+    },
+    "KO|MDNY||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3847
+    },
+    "KO|MDNY||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3847
+    },
+    "KO|MDNY||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3847
+    },
+    "KO|MDNY||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1048
+    },
+    "KO|MDNY||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1048
+    },
+    "KO|MDNY||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1048
+    },
+    "KO|MDUB||BHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 6
+    },
+    "KO|MDUB||BHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 6
+    },
+    "KO|MDUB||BHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 6
+    },
+    "KO|MDUB||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3
+    },
+    "KO|MDUB||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3
+    },
+    "KO|MDUB||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3
+    },
+    "KO|MRMT||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3537
+    },
+    "KO|MRMT||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3537
+    },
+    "KO|MRMT||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3537
+    },
+    "KO|ORLT||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1237
+    },
+    "KO|ORLT||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1237
+    },
+    "KO|ORLT||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1237
+    },
+    "KO|OSMT||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 401
+    },
+    "KO|OSMT||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 401
+    },
+    "KO|OSMT||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 401
+    },
+    "KO|PHSR||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 190
+    },
+    "KO|PHSR||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 190
+    },
+    "KO|PHSR||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 190
+    },
+    "KO|RKY||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3058
+    },
+    "KO|RKY||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3058
+    },
+    "KO|RKY||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3058
+    },
+    "KO|SARI||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|SARI||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|SARI||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|SAUV||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 375
+    },
+    "KO|SAUV||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 375
+    },
+    "KO|SAUV||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 375
+    },
+    "KO|SAUV||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 89
+    },
+    "KO|SAUV||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 89
+    },
+    "KO|SAUV||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 89
+    },
+    "KO|SHAP||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 31
+    },
+    "KO|SHAP||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 31
+    },
+    "KO|SHAP||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 31
+    },
+    "KO|SILT||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1404
+    },
+    "KO|SILT||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1404
+    },
+    "KO|SILT||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1404
+    },
+    "KO|SILV||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 124
+    },
+    "KO|SILV||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 124
+    },
+    "KO|SILV||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 124
+    },
+    "KO|SIMA||BHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 4
+    },
+    "KO|SIMA||BHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 4
+    },
+    "KO|SIMA||BHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 4
+    },
+    "KO|SLVT||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2360
+    },
+    "KO|SLVT||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2360
+    },
+    "KO|SLVT||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 2360
+    },
+    "KO|SLVT||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 263
+    },
+    "KO|SLVT||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 263
+    },
+    "KO|SLVT||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 263
+    },
+    "KO|SMAA||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 44
+    },
+    "KO|SMAA||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 44
+    },
+    "KO|SMAA||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 44
+    },
+    "KO|SOMA||EHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 37
+    },
+    "KO|SOMA||EHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 37
+    },
+    "KO|SOMA||EHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 37
+    },
+    "KO|SOMA||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 90
+    },
+    "KO|SOMA||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 90
+    },
+    "KO|SOMA||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 90
+    },
+    "KO|SPNC||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 34
+    },
+    "KO|SPNC||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 34
+    },
+    "KO|SPNC||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 34
+    },
+    "KO|SUSR||EHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1340
+    },
+    "KO|SUSR||EHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1340
+    },
+    "KO|SUSR||EHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1340
+    },
+    "KO|SUSR||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1744
+    },
+    "KO|SUSR||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1744
+    },
+    "KO|SUSR||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1744
+    },
+    "KO|SVSK||BHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|SVSK||BHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|SVSK||BHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1
+    },
+    "KO|TEKI||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 244
+    },
+    "KO|TEKI||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 244
+    },
+    "KO|TEKI||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 244
+    },
+    "KO|TKR||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 996
+    },
+    "KO|TKR||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 996
+    },
+    "KO|TKR||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 996
+    },
+    "KO|TVSB||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 796
+    },
+    "KO|TVSB||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 796
+    },
+    "KO|TVSB||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 796
+    },
+    "KO|TZLA||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 46
+    },
+    "KO|TZLA||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 46
+    },
+    "KO|TZLA||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 46
+    },
+    "KO|UKOP||EHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1071
+    },
+    "KO|UKOP||EHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1071
+    },
+    "KO|UKOP||EHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1071
+    },
+    "KO|UKOP||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1481
+    },
+    "KO|UKOP||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1481
+    },
+    "KO|UKOP||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1481
+    },
+    "KO|UVEZ||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 18
+    },
+    "KO|UVEZ||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 18
+    },
+    "KO|UVEZ||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 18
+    },
+    "KO|YAYO||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 963
+    },
+    "KO|YAYO||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 963
+    },
+    "KO|YAYO||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 963
+    },
+    "KO|YENI||HNE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1146
+    },
+    "KO|YENI||HNN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1146
+    },
+    "KO|YENI||HNZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 1146
+    },
+    "KO|YLV||HHE": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3328
+    },
+    "KO|YLV||HHN": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3328
+    },
+    "KO|YLV||HHZ": {
+      "status": "covered_by_existing_inventory",
+      "trace_count": 3328
+    },
+    "|EDC||HHE": {
+      "errors": [
+        "KOERI: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "IRIS: FDSNBadRequestException: Bad request. If you think your request was valid please contact the developers.\nHTTP Status code: 400\nDetailed response of server:\n\nError 400 BAD_REQUEST: Invalid input parameter: net=\nRequest:\nhttps://service.earthscope.org/fdsnws/station/1/query?network=&station=EDC&location=--&channel=HHE&level=response&startbefore=2017-08-01T20%3A02%3A37.600000&endafter=2017-07-22T22%3A12%3A34.700000\nRequest Submitted:\n2026-08-22T14:31:06\nService version:1.1.56\n          build:0.0.0-SNAPSHOT",
+        "GFZ: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "eida-routing: FDSNBadGatewayException: Service responds: Bad gateway \nHTTP Status code: 502\nDetailed response of server:\n\nBad Gateway -- <html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>"
+      ],
+      "query": {
+        "channel": "HHE",
+        "endafter": "2017-07-22T22:12:34.700000Z",
+        "level": "response",
+        "location": "--",
+        "network": "",
+        "startbefore": "2017-08-01T20:02:37.600000Z",
+        "station": "EDC"
+      },
+      "status": "unresolved",
+      "trace_count": 6
+    },
+    "|EDC||HHN": {
+      "errors": [
+        "KOERI: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "IRIS: FDSNBadRequestException: Bad request. If you think your request was valid please contact the developers.\nHTTP Status code: 400\nDetailed response of server:\n\nError 400 BAD_REQUEST: Invalid input parameter: net=\nRequest:\nhttps://service.earthscope.org/fdsnws/station/1/query?network=&station=EDC&location=--&channel=HHN&level=response&startbefore=2017-08-01T20%3A02%3A37.600000&endafter=2017-07-22T22%3A12%3A34.700000\nRequest Submitted:\n2026-08-22T14:31:08\nService version:1.1.56\n          build:0.0.0-SNAPSHOT",
+        "GFZ: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "eida-routing: FDSNBadGatewayException: Service responds: Bad gateway \nHTTP Status code: 502\nDetailed response of server:\n\nBad Gateway -- <html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>"
+      ],
+      "query": {
+        "channel": "HHN",
+        "endafter": "2017-07-22T22:12:34.700000Z",
+        "level": "response",
+        "location": "--",
+        "network": "",
+        "startbefore": "2017-08-01T20:02:37.600000Z",
+        "station": "EDC"
+      },
+      "status": "unresolved",
+      "trace_count": 6
+    },
+    "|EDC||HHZ": {
+      "errors": [
+        "KOERI: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "IRIS: FDSNBadRequestException: Bad request. If you think your request was valid please contact the developers.\nHTTP Status code: 400\nDetailed response of server:\n\nError 400 BAD_REQUEST: Invalid input parameter: net=\nRequest:\nhttps://service.earthscope.org/fdsnws/station/1/query?network=&station=EDC&location=--&channel=HHZ&level=response&startbefore=2017-08-01T20%3A02%3A37.600000&endafter=2017-07-22T22%3A12%3A34.700000\nRequest Submitted:\n2026-08-22T14:31:10\nService version:1.1.56\n          build:0.0.0-SNAPSHOT",
+        "GFZ: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "eida-routing: FDSNBadGatewayException: Service responds: Bad gateway \nHTTP Status code: 502\nDetailed response of server:\n\nBad Gateway -- <html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>"
+      ],
+      "query": {
+        "channel": "HHZ",
+        "endafter": "2017-07-22T22:12:34.700000Z",
+        "level": "response",
+        "location": "--",
+        "network": "",
+        "startbefore": "2017-08-01T20:02:37.600000Z",
+        "station": "EDC"
+      },
+      "status": "unresolved",
+      "trace_count": 6
+    },
+    "|KRBG||HHE": {
+      "errors": [
+        "KOERI: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "IRIS: FDSNBadRequestException: Bad request. If you think your request was valid please contact the developers.\nHTTP Status code: 400\nDetailed response of server:\n\nError 400 BAD_REQUEST: Invalid input parameter: net=\nRequest:\nhttps://service.earthscope.org/fdsnws/station/1/query?network=&station=KRBG&location=--&channel=HHE&level=response&startbefore=2017-07-23T18%3A50%3A28.100000&endafter=2017-07-22T22%3A12%3A30.800000\nRequest Submitted:\n2026-08-22T14:31:14\nService version:1.1.56\n          build:0.0.0-SNAPSHOT",
+        "GFZ: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "eida-routing: FDSNBadGatewayException: Service responds: Bad gateway \nHTTP Status code: 502\nDetailed response of server:\n\nBad Gateway -- <html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>"
+      ],
+      "query": {
+        "channel": "HHE",
+        "endafter": "2017-07-22T22:12:30.800000Z",
+        "level": "response",
+        "location": "--",
+        "network": "",
+        "startbefore": "2017-07-23T18:50:28.100000Z",
+        "station": "KRBG"
+      },
+      "status": "unresolved",
+      "trace_count": 6
+    },
+    "|KRBG||HHN": {
+      "errors": [
+        "KOERI: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "IRIS: FDSNBadRequestException: Bad request. If you think your request was valid please contact the developers.\nHTTP Status code: 400\nDetailed response of server:\n\nError 400 BAD_REQUEST: Invalid input parameter: net=\nRequest:\nhttps://service.earthscope.org/fdsnws/station/1/query?network=&station=KRBG&location=--&channel=HHN&level=response&startbefore=2017-07-23T18%3A50%3A28.100000&endafter=2017-07-22T22%3A12%3A30.800000\nRequest Submitted:\n2026-08-22T14:31:15\nService version:1.1.56\n          build:0.0.0-SNAPSHOT",
+        "GFZ: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "eida-routing: FDSNBadGatewayException: Service responds: Bad gateway \nHTTP Status code: 502\nDetailed response of server:\n\nBad Gateway -- <html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>"
+      ],
+      "query": {
+        "channel": "HHN",
+        "endafter": "2017-07-22T22:12:30.800000Z",
+        "level": "response",
+        "location": "--",
+        "network": "",
+        "startbefore": "2017-07-23T18:50:28.100000Z",
+        "station": "KRBG"
+      },
+      "status": "unresolved",
+      "trace_count": 6
+    },
+    "|KRBG||HHZ": {
+      "errors": [
+        "KOERI: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "IRIS: FDSNBadRequestException: Bad request. If you think your request was valid please contact the developers.\nHTTP Status code: 400\nDetailed response of server:\n\nError 400 BAD_REQUEST: Invalid input parameter: net=\nRequest:\nhttps://service.earthscope.org/fdsnws/station/1/query?network=&station=KRBG&location=--&channel=HHZ&level=response&startbefore=2017-07-23T18%3A50%3A28.100000&endafter=2017-07-22T22%3A12%3A30.800000\nRequest Submitted:\n2026-08-22T14:31:18\nService version:1.1.56\n          build:0.0.0-SNAPSHOT",
+        "GFZ: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "eida-routing: FDSNBadGatewayException: Service responds: Bad gateway \nHTTP Status code: 502\nDetailed response of server:\n\nBad Gateway -- <html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>"
+      ],
+      "query": {
+        "channel": "HHZ",
+        "endafter": "2017-07-22T22:12:30.800000Z",
+        "level": "response",
+        "location": "--",
+        "network": "",
+        "startbefore": "2017-07-23T18:50:28.100000Z",
+        "station": "KRBG"
+      },
+      "status": "unresolved",
+      "trace_count": 6
+    },
+    "|MDNY||HHE": {
+      "errors": [
+        "KOERI: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "IRIS: FDSNBadRequestException: Bad request. If you think your request was valid please contact the developers.\nHTTP Status code: 400\nDetailed response of server:\n\nError 400 BAD_REQUEST: Invalid input parameter: net=\nRequest:\nhttps://service.earthscope.org/fdsnws/station/1/query?network=&station=MDNY&location=--&channel=HHE&level=response&startbefore=2017-07-25T19%3A16%3A55.900000&endafter=2017-07-21T23%3A10%3A35.400000\nRequest Submitted:\n2026-08-22T14:31:23\nService version:1.1.56\n          build:0.0.0-SNAPSHOT",
+        "GFZ: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "eida-routing: FDSNBadGatewayException: Service responds: Bad gateway \nHTTP Status code: 502\nDetailed response of server:\n\nBad Gateway -- <html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>"
+      ],
+      "query": {
+        "channel": "HHE",
+        "endafter": "2017-07-21T23:10:35.400000Z",
+        "level": "response",
+        "location": "--",
+        "network": "",
+        "startbefore": "2017-07-25T19:16:55.900000Z",
+        "station": "MDNY"
+      },
+      "status": "unresolved",
+      "trace_count": 3
+    },
+    "|MDNY||HHN": {
+      "errors": [
+        "KOERI: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "IRIS: FDSNBadRequestException: Bad request. If you think your request was valid please contact the developers.\nHTTP Status code: 400\nDetailed response of server:\n\nError 400 BAD_REQUEST: Invalid input parameter: net=\nRequest:\nhttps://service.earthscope.org/fdsnws/station/1/query?network=&station=MDNY&location=--&channel=HHN&level=response&startbefore=2017-07-25T19%3A16%3A55.900000&endafter=2017-07-21T23%3A10%3A35.400000\nRequest Submitted:\n2026-08-22T14:31:24\nService version:1.1.56\n          build:0.0.0-SNAPSHOT",
+        "GFZ: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "eida-routing: FDSNBadGatewayException: Service responds: Bad gateway \nHTTP Status code: 502\nDetailed response of server:\n\nBad Gateway -- <html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>"
+      ],
+      "query": {
+        "channel": "HHN",
+        "endafter": "2017-07-21T23:10:35.400000Z",
+        "level": "response",
+        "location": "--",
+        "network": "",
+        "startbefore": "2017-07-25T19:16:55.900000Z",
+        "station": "MDNY"
+      },
+      "status": "unresolved",
+      "trace_count": 3
+    },
+    "|MDNY||HHZ": {
+      "errors": [
+        "KOERI: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "IRIS: FDSNBadRequestException: Bad request. If you think your request was valid please contact the developers.\nHTTP Status code: 400\nDetailed response of server:\n\nError 400 BAD_REQUEST: Invalid input parameter: net=\nRequest:\nhttps://service.earthscope.org/fdsnws/station/1/query?network=&station=MDNY&location=--&channel=HHZ&level=response&startbefore=2017-07-25T19%3A16%3A55.900000&endafter=2017-07-21T23%3A10%3A35.400000\nRequest Submitted:\n2026-08-22T14:31:25\nService version:1.1.56\n          build:0.0.0-SNAPSHOT",
+        "GFZ: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "eida-routing: FDSNBadGatewayException: Service responds: Bad gateway \nHTTP Status code: 502\nDetailed response of server:\n\nBad Gateway -- <html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>"
+      ],
+      "query": {
+        "channel": "HHZ",
+        "endafter": "2017-07-21T23:10:35.400000Z",
+        "level": "response",
+        "location": "--",
+        "network": "",
+        "startbefore": "2017-07-25T19:16:55.900000Z",
+        "station": "MDNY"
+      },
+      "status": "unresolved",
+      "trace_count": 3
+    },
+    "|SLVT||HHE": {
+      "errors": [
+        "KOERI: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "IRIS: FDSNBadRequestException: Bad request. If you think your request was valid please contact the developers.\nHTTP Status code: 400\nDetailed response of server:\n\nError 400 BAD_REQUEST: Invalid input parameter: net=\nRequest:\nhttps://service.earthscope.org/fdsnws/station/1/query?network=&station=SLVT&location=--&channel=HHE&level=response&startbefore=2017-08-01T20%3A02%3A50.000000&endafter=2017-07-21T23%3A10%3A39.200000\nRequest Submitted:\n2026-08-22T14:31:29\nService version:1.1.56\n          build:0.0.0-SNAPSHOT",
+        "GFZ: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "eida-routing: FDSNBadGatewayException: Service responds: Bad gateway \nHTTP Status code: 502\nDetailed response of server:\n\nBad Gateway -- <html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>"
+      ],
+      "query": {
+        "channel": "HHE",
+        "endafter": "2017-07-21T23:10:39.200000Z",
+        "level": "response",
+        "location": "--",
+        "network": "",
+        "startbefore": "2017-08-01T20:02:50.000000Z",
+        "station": "SLVT"
+      },
+      "status": "unresolved",
+      "trace_count": 2
+    },
+    "|SLVT||HHN": {
+      "errors": [
+        "KOERI: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "IRIS: FDSNBadRequestException: Bad request. If you think your request was valid please contact the developers.\nHTTP Status code: 400\nDetailed response of server:\n\nError 400 BAD_REQUEST: Invalid input parameter: net=\nRequest:\nhttps://service.earthscope.org/fdsnws/station/1/query?network=&station=SLVT&location=--&channel=HHN&level=response&startbefore=2017-08-01T20%3A02%3A50.000000&endafter=2017-07-21T23%3A10%3A39.200000\nRequest Submitted:\n2026-08-22T14:31:30\nService version:1.1.56\n          build:0.0.0-SNAPSHOT",
+        "GFZ: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "eida-routing: FDSNBadGatewayException: Service responds: Bad gateway \nHTTP Status code: 502\nDetailed response of server:\n\nBad Gateway -- <html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>"
+      ],
+      "query": {
+        "channel": "HHN",
+        "endafter": "2017-07-21T23:10:39.200000Z",
+        "level": "response",
+        "location": "--",
+        "network": "",
+        "startbefore": "2017-08-01T20:02:50.000000Z",
+        "station": "SLVT"
+      },
+      "status": "unresolved",
+      "trace_count": 2
+    },
+    "|SLVT||HHZ": {
+      "errors": [
+        "KOERI: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "IRIS: FDSNBadRequestException: Bad request. If you think your request was valid please contact the developers.\nHTTP Status code: 400\nDetailed response of server:\n\nError 400 BAD_REQUEST: Invalid input parameter: net=\nRequest:\nhttps://service.earthscope.org/fdsnws/station/1/query?network=&station=SLVT&location=--&channel=HHZ&level=response&startbefore=2017-08-01T20%3A02%3A50.000000&endafter=2017-07-21T23%3A10%3A39.200000\nRequest Submitted:\n2026-08-22T14:31:35\nService version:1.1.56\n          build:0.0.0-SNAPSHOT",
+        "GFZ: FDSNNoDataException: No data available for request.\nHTTP Status code: 204\nDetailed response of server:\n\n",
+        "eida-routing: FDSNBadGatewayException: Service responds: Bad gateway \nHTTP Status code: 502\nDetailed response of server:\n\nBad Gateway -- <html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>"
+      ],
+      "query": {
+        "channel": "HHZ",
+        "endafter": "2017-07-21T23:10:39.200000Z",
+        "level": "response",
+        "location": "--",
+        "network": "",
+        "startbefore": "2017-08-01T20:02:50.000000Z",
+        "station": "SLVT"
+      },
+      "status": "unresolved",
+      "trace_count": 2
+    }
+  },
+  "schema_version": 1
+}

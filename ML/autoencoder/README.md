@@ -4,7 +4,7 @@
 
 ## TL;DR
 
-`train.py` (VAE) and `train_cvae.py` (CVAE) can give a run a stable `--name` and can normalize STFT magnitudes globally with `--global_normalization`. Global normalization fits one log-domain min/max on the training split only, so it preserves amplitude differences between events and stations. `ML/diffusion/create_embeddings.py` reads the selected checkpoint's normalization and preprocessing contract, allowing it to export inputs that match either globally normalized or legacy per-event-normalized AEs.
+`train.py` (VAE) and `train_cvae.py` (CVAE) can give a run a stable `--name` and normalize STFT magnitudes globally with `--global_normalization`. New runs use the invertible transform `log(magnitude + amplitude_epsilon)`; the default epsilon `1e-12` prevents physical acceleration in `m/s^2` from collapsing near zero. Global bounds are fitted on the training split only. Embedding export reads the complete saved transform, while legacy checkpoints without epsilon retain their original `log1p` behavior.
 
 This directory contains code for training a convolutional autoencoder on seismic waveform data converted to STFT spectrograms.
 
@@ -72,6 +72,16 @@ python train.py \
 
 This writes checkpoints to `checkpoints/vae-global-v1/` and TensorBoard logs to `logs/vae-global-v1/`.
 
+For response-corrected acceleration, use a fresh run name and the physical archive:
+
+```bash
+python train.py \
+  --data_dir ../../data/physical_waveforms_snr2_2-15hz \
+  --name vae-global-physical-v2 \
+  --global_normalization --amplitude_epsilon 1e-12 \
+  --channels HH HN EH BH
+```
+
 ### 6. Named global-normalized CVAE run
 
 ```bash
@@ -93,25 +103,30 @@ The CVAE uses its own default roots: `checkpoints_cvae/cvae-global-v1/` and `log
 - `--nperseg`: Length of each segment for STFT (default: 256)
 - `--noverlap`: Number of points to overlap between segments (default: 192)
 - `--nfft`: Length of the FFT used (default: 256)
-- `--global_normalization`: Use one shared min/max for all post-resize, `log1p` STFT-magnitude values. It is fitted on the training split only. Without this flag, the legacy per-event, per-component min/max normalization remains the default.
+- `--global_normalization`: Use one shared min/max for all post-resize log-magnitude values. It is fitted on the training split only. Without this flag, per-event, per-component min/max normalization remains the default.
+- `--amplitude_epsilon`: Positive floor in `log(magnitude + epsilon)` (default `1e-12`). Legacy checkpoints lacking this field imply `1.0`, exactly reproducing `log1p(magnitude)`.
 
 ### Global Normalization Contract
 
-With `--global_normalization`, the dataset first computes magnitude STFTs, applies `log1p`, and performs any configured resize. It then fits one scalar `global_min` and `global_max` across every finite value in every component of the training indices only. The same fixed pair is reused for training, validation, and test samples:
+With `--global_normalization`, the dataset computes magnitude STFTs, applies the configured physical log transform, and performs any configured resize. It then fits one scalar `global_min` and `global_max` across every finite value in every component of the training indices only. The same fixed contract is reused for training, validation, and test samples:
 
 ```text
-normalized = (log1p_magnitude - global_min) / (global_max - global_min)
+log_magnitude = log(magnitude + amplitude_epsilon)
+normalized = (log_magnitude - global_min) / (global_max - global_min)
+
+log_magnitude = normalized * (global_max - global_min) + global_min
+magnitude = max(exp(log_magnitude) - amplitude_epsilon, 0)
 ```
 
 Values are not clipped. Therefore validation or test values may lie outside `[0, 1]`, which is intentional and avoids leakage from those splits into the fitted range. A zero fitted range maps all values to zero.
 
-The run configuration and checkpoints persist `normalization_mode`, `global_min`, `global_max`, and `run_name`. Keep the checkpoint and these statistics together whenever the model is used downstream.
+The run configuration and checkpoints persist `normalization_mode`, `amplitude_epsilon`, `global_min`, `global_max`, and `run_name`. Keep the checkpoint and these statistics together whenever the model is used downstream. Training stops immediately if an input, VAE activation, perceptual loss, or objective becomes non-finite.
 
 #### Progress and normalization cache
 
 Before global normalization is fitted, training fingerprints the ordered training split and displays a `tqdm` progress bar. On a cache miss, a second progress bar tracks the one-time STFT scan that fits the bounds. The resulting JSON cache entry is written atomically, so an interrupted write is not treated as a valid cache entry.
 
-VAE cache entries live in `checkpoints/.normalization_cache/`; CVAE entries live in `checkpoints_cvae/.normalization_cache/`. A matching entry skips the expensive STFT scan (the lightweight file-fingerprinting pass still runs to validate it). The cache key covers the exact ordered training indices, each selected file's resolved path, size, and modification time, plus all STFT/resampling/resize preprocessing settings. Any change to those inputs creates a new entry automatically.
+VAE cache entries live in `checkpoints/.normalization_cache/`; CVAE entries live in `checkpoints_cvae/.normalization_cache/`. A matching entry skips the expensive STFT scan (the lightweight file-fingerprinting pass still runs to validate it). The cache key covers the exact ordered training indices, each selected file's resolved path, size, and modification time, plus all STFT/resampling/resize settings and `amplitude_epsilon`. Any change creates a new entry automatically.
 
 ### Model Arguments
 - `--latent_dim`: Dimension of latent space (default: 128)
@@ -174,11 +189,11 @@ python create_embeddings.py \
   --ae_checkpoint ../autoencoder/checkpoints/vae-global-v1/best_model.pt
 ```
 
-For a globally normalized AE, embedding export reads `normalization_mode`, `global_min`, and `global_max` from the selected checkpoint and applies that exact fixed pair after `log1p` and any STFT resizing. It never fits bounds over the export dataset. A global-normalized checkpoint without usable saved bounds fails rather than silently refitting or falling back to per-event normalization. Legacy checkpoints continue to use per-event normalization.
+For a globally normalized AE, embedding export reads `normalization_mode`, `amplitude_epsilon`, `global_min`, and `global_max` from the selected checkpoint and applies the exact training transform. It never fits bounds over the export dataset. A global-normalized checkpoint without usable bounds fails rather than silently refitting. Checkpoints created before epsilon was recorded default to `1.0`, preserving their former `log1p` transform.
 
 Unless explicitly supplied on the command line, export uses the checkpoint's saved channel groups, resize geometry (`target_freq_bins` and `target_time_bins`), resampling rate, and duration. The STFT window settings (`nperseg`, `noverlap`, and `nfft`) always come from the checkpoint configuration. Legacy checkpoints fall back to `HH`, 100 Hz, and 70 seconds where those saved values do not exist. CLI values for `--channels`, `--target_freq_bins`, `--target_time_bins`, `--resample_hz`, and `--target_seconds` override the corresponding saved settings; use overrides only when they intentionally match the AE's training input contract.
 
-The output `embeddings/source.json` records the selected checkpoint, resolved STFT settings, resolved channels, normalization mode, and global bounds (or `null` bounds for per-event normalization), alongside the embedding count and shape.
+The output `embeddings/source.json` records the selected checkpoint, resolved STFT settings, resolved channels, normalization mode, amplitude epsilon, and global bounds (or `null` bounds for per-event normalization), alongside the embedding count and shape.
 
 ## Example Training Sessions
 

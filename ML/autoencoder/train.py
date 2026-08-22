@@ -3,6 +3,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 import json
+import math
 import re
 
 import torch
@@ -18,6 +19,14 @@ from model import VariationalAutoencoder
 from stft_dataset import SeismicSTFTDataset, collate_fn
 from perceptual import PhaseNetPerceptualLoss, VGGPerceptualLoss
 from normalization_cache import fit_or_load_global_normalization
+
+
+def _positive_finite_float(value):
+    """Argparse type for strictly positive finite floating-point values."""
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise argparse.ArgumentTypeError("expected a finite value greater than zero")
+    return parsed
 
 
 def _named_run_directories(args):
@@ -150,6 +159,24 @@ class Trainer:
             'val': {},
             'test': {},
         }
+        self.current_phase = 'initialization'
+
+    def _require_finite(self, name, value):
+        """Stop immediately when data, activations, or losses become non-finite."""
+        if value is None or not torch.is_tensor(value) or torch.isfinite(value).all():
+            return
+        finite = value[torch.isfinite(value)]
+        finite_range = (
+            f"finite_min={finite.min().item():.6g}, finite_max={finite.max().item():.6g}"
+            if finite.numel()
+            else "no finite values"
+        )
+        nonfinite_count = value.numel() - finite.numel()
+        raise FloatingPointError(
+            f"Non-finite {name} during {self.current_phase} at epoch "
+            f"{self.current_epoch + 1}: {nonfinite_count}/{value.numel()} values are "
+            f"non-finite ({finite_range}). Training stopped before saving a bad checkpoint."
+        )
 
     def _log_batch_metrics(self, split, step, loss_metrics, scope='Batch'):
         """Log batch-level metrics with a consistent TensorBoard schema."""
@@ -217,6 +244,10 @@ class Trainer:
 
     def _compute_total_loss(self, reconstructed, spectrograms, mu=None, logvar=None, update_norm_stats=False):
         """Compute weighted loss from pre-priority terms and expose raw/pre-priority metrics."""
+        self._require_finite('input spectrograms', spectrograms)
+        self._require_finite('reconstruction', reconstructed)
+        self._require_finite('latent mean', mu)
+        self._require_finite('latent log-variance', logvar)
         metrics = {
             'recon_loss': None,
             'kl_loss': None,
@@ -245,6 +276,7 @@ class Trainer:
         perceptual_raw = None
         if self.perceptual_loss_fn is not None and self.perceptual_weight > 0:
             perceptual_raw = self.perceptual_loss_fn(reconstructed, spectrograms)
+            self._require_finite('perceptual loss', perceptual_raw)
             perceptual_term, perceptual_term_item = self._pre_priority_term(
                 'perc', perceptual_raw, update_norm_stats
             )
@@ -254,6 +286,11 @@ class Trainer:
         if kl_term is not None:
             total_loss = total_loss + self.beta * kl_term
             reported_total = reported_total + self.beta * kl_raw
+
+        self._require_finite('reconstruction loss', recon_raw)
+        self._require_finite('KL loss', kl_raw)
+        self._require_finite('objective loss', total_loss)
+        self._require_finite('reported loss', reported_total)
 
         metrics['recon_loss'] = recon_term_item
         metrics['raw_recon_loss'] = recon_raw.detach().item()
@@ -270,6 +307,7 @@ class Trainer:
         
     def train_epoch(self, eval_interval=None):
         """Train for one epoch with optional periodic evaluation."""
+        self.current_phase = 'training'
         self.model.train()
         epoch_objective_loss = 0.0
         epoch_report_total = 0.0
@@ -347,6 +385,7 @@ class Trainer:
     
     def _quick_eval(self, train_step):
         """Quick evaluation on a few batches of val/test data."""
+        self.current_phase = f'quick evaluation at training step {train_step}'
         # Validate on first batch
         self.model.eval()
         with torch.no_grad():
@@ -392,9 +431,11 @@ class Trainer:
         
         self.writer.flush()
         self.model.train()  # Back to training mode
+        self.current_phase = 'training'
     
     def validate(self):
         """Validate the model."""
+        self.current_phase = 'validation'
         self.model.eval()
         epoch_objective_loss = 0.0
         epoch_report_total = 0.0
@@ -486,6 +527,7 @@ class Trainer:
     
     def test(self, num_images=8):
         """Test the model and log sample input-output pairs."""
+        self.current_phase = 'test evaluation'
         if self.test_loader is None:
             print("No test loader provided, skipping test evaluation.")
             return None
@@ -770,6 +812,16 @@ def parse_args():
     parser.add_argument('--global_normalization', action='store_true',
                         help='Normalize all log-scaled spectrograms with min/max fitted on the training split. '
                              'Default is per-event normalization.')
+    parser.add_argument(
+        '--amplitude_epsilon',
+        type=_positive_finite_float,
+        default=1e-12,
+        help=(
+            'Positive magnitude floor used by the invertible log transform '
+            'log(magnitude + epsilon). The default 1e-12 is suitable for physical '
+            'acceleration in m/s^2; it is saved in checkpoints and embedding provenance.'
+        ),
+    )
 
     # Model arguments
     parser.add_argument('--latent_channels', type=int, default=4,
@@ -868,6 +920,7 @@ def main():
         nfft=args.nfft,
         normalize=True,
         log_scale=True,
+        amplitude_epsilon=args.amplitude_epsilon,
         global_normalization=args.global_normalization,
         target_freq_bins=args.target_freq_bins,
         target_time_bins=args.target_time_bins,
@@ -986,6 +1039,9 @@ def main():
                 nperseg=args.nperseg,
                 noverlap=args.noverlap,
                 nfft=args.nfft,
+                global_min=global_min,
+                global_max=global_max,
+                amplitude_epsilon=args.amplitude_epsilon,
                 device=str(device),
             )
             perceptual_weight = args.phasenet_weight

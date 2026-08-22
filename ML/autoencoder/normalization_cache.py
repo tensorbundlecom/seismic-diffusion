@@ -15,8 +15,8 @@ from tqdm import tqdm
 
 
 # Bump this whenever the preprocessing used by fit_global_normalization changes.
-CACHE_FORMAT_VERSION = 1
-PREPROCESSING_VERSION = 1
+CACHE_FORMAT_VERSION = 2
+PREPROCESSING_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -35,6 +35,7 @@ def _dataset_settings(dataset) -> dict:
         "dataset_type": f"{type(dataset).__module__}.{type(dataset).__qualname__}",
         "return_magnitude": bool(dataset.return_magnitude),
         "log_scale": bool(dataset.log_scale),
+        "amplitude_epsilon": float(dataset.amplitude_epsilon),
         "nperseg": int(dataset.nperseg),
         "noverlap": int(dataset.noverlap),
         "nfft": int(dataset.nfft),

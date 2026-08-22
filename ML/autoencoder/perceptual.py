@@ -1,3 +1,6 @@
+import math
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -101,6 +104,9 @@ class PhaseNetPerceptualLoss(nn.Module):
 
     This module turns spectrograms into proxy waveforms and compares PhaseNet outputs
     between original and reconstructed inputs. The PhaseNet parameters are frozen.
+    When global bounds are supplied, inputs are first mapped back to physical
+    log-magnitude space and inverted with ``exp(log_magnitude) - amplitude_epsilon``.
+    Omitting the bounds retains the legacy per-event ``expm1`` behavior.
     """
 
     def __init__(
@@ -111,6 +117,9 @@ class PhaseNetPerceptualLoss(nn.Module):
         nfft: int = 256,
         device: str = "cpu",
         eps: float = 1e-6,
+        global_min: Optional[float] = None,
+        global_max: Optional[float] = None,
+        amplitude_epsilon: float = 0.0,
     ):
         super().__init__()
 
@@ -130,6 +139,27 @@ class PhaseNetPerceptualLoss(nn.Module):
         self.noverlap = noverlap
         self.nfft = nfft
         self.eps = eps
+
+        if (global_min is None) != (global_max is None):
+            raise ValueError("global_min and global_max must either both be set or both be None.")
+        if global_min is not None:
+            global_min = float(global_min)
+            global_max = float(global_max)
+            if not math.isfinite(global_min) or not math.isfinite(global_max):
+                raise ValueError("global_min and global_max must be finite.")
+            if global_max <= global_min:
+                raise ValueError(
+                    "Global normalization requires global_max > global_min, "
+                    f"got {global_max} <= {global_min}."
+                )
+
+        amplitude_epsilon = float(amplitude_epsilon)
+        if not math.isfinite(amplitude_epsilon) or amplitude_epsilon < 0.0:
+            raise ValueError("amplitude_epsilon must be finite and non-negative.")
+
+        self.global_min = global_min
+        self.global_max = global_max
+        self.amplitude_epsilon = amplitude_epsilon
 
         hop_length = self.nperseg - self.noverlap
         if hop_length <= 0:
@@ -166,7 +196,34 @@ class PhaseNetPerceptualLoss(nn.Module):
         cannot be applied for shape reasons.
         """
         # spectrogram: (B, C, F, T)
-        linear_mag = torch.expm1(spectrogram.clamp_min(0.0))
+        if not torch.isfinite(spectrogram).all():
+            raise FloatingPointError(
+                "PhaseNet perceptual input contains non-finite spectrogram values."
+            )
+
+        if self.global_min is None:
+            # Legacy/per-event inputs are normalized log1p magnitudes. Preserve the
+            # historical inversion exactly for checkpoints and runs without global
+            # physical-amplitude normalization.
+            linear_mag = torch.expm1(spectrogram.clamp_min(0.0))
+        else:
+            assert self.global_max is not None
+            log_magnitude = (
+                spectrogram * (self.global_max - self.global_min) + self.global_min
+            )
+            max_log = math.log(torch.finfo(log_magnitude.dtype).max)
+            if (log_magnitude > max_log).any():
+                observed_max = log_magnitude.detach().max().item()
+                raise FloatingPointError(
+                    "PhaseNet perceptual inversion would overflow: "
+                    f"maximum log magnitude is {observed_max:.6g}, but "
+                    f"{log_magnitude.dtype} supports at most {max_log:.6g}."
+                )
+            linear_mag = (torch.exp(log_magnitude) - self.amplitude_epsilon).clamp_min(0.0)
+            if not torch.isfinite(linear_mag).all():
+                raise FloatingPointError(
+                    "PhaseNet perceptual inversion produced non-finite magnitudes."
+                )
         batch_size, channels, freq_bins, time_bins = linear_mag.shape
 
         expected_freq_bins = self.nfft // 2 + 1

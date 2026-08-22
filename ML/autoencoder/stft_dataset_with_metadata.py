@@ -40,6 +40,7 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
         resample_hz: float = 100.0,
         target_seconds: float = 70.0,
         global_normalization: bool = False,
+        amplitude_epsilon: float = 1.0,
     ):
         """
         Initialize the dataset.
@@ -59,6 +60,9 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
                 using one log-domain min/max fitted on the training indices. Call
                 :meth:`fit_global_normalization` or
                 :meth:`set_global_normalization_stats` before reading samples.
+            amplitude_epsilon: Positive physical-amplitude floor used by the
+                invertible log transform ``log(magnitude + amplitude_epsilon)``.
+                The legacy value 1.0 is exactly equivalent to ``log1p(magnitude)``.
         """
         self.data_dir = Path(data_dir)
         self.event_file = Path(event_file)
@@ -75,6 +79,12 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
         self.resample_hz = float(resample_hz) if resample_hz else None
         self.target_seconds = float(target_seconds) if target_seconds else None
         self.global_normalization = bool(global_normalization)
+        self.amplitude_epsilon = float(amplitude_epsilon)
+        if not np.isfinite(self.amplitude_epsilon) or self.amplitude_epsilon <= 0.0:
+            raise ValueError(
+                "amplitude_epsilon must be finite and greater than zero, "
+                f"got {amplitude_epsilon!r}."
+            )
         self.global_min: Optional[float] = None
         self.global_max: Optional[float] = None
         self.target_samples = (
@@ -374,7 +384,7 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
             if self.return_magnitude:
                 magnitude_spec = np.abs(Zxx)
                 if self.log_scale:
-                    magnitude_spec = np.log1p(magnitude_spec)
+                    magnitude_spec = np.log(magnitude_spec + self.amplitude_epsilon)
                 if per_sample_normalize:
                     mag_min = magnitude_spec.min()
                     mag_max = magnitude_spec.max()

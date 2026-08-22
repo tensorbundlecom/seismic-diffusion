@@ -172,7 +172,28 @@ def _normalization_from_checkpoint(
         "mode": normalized_mode,
         "global_min": None,
         "global_max": None,
+        "amplitude_epsilon": None,
     }
+    amplitude_epsilon, raw_checkpoint = _checkpoint_field(
+        checkpoint_path, config, "amplitude_epsilon", raw_checkpoint
+    )
+    # Checkpoints made before the physical-amplitude transform used log1p,
+    # which is exactly log(magnitude + 1).
+    if amplitude_epsilon is None:
+        amplitude_epsilon = 1.0
+    try:
+        amplitude_epsilon = float(amplitude_epsilon)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "The AE checkpoint has an invalid amplitude_epsilon; expected a finite "
+            "number greater than zero."
+        ) from error
+    if not math.isfinite(amplitude_epsilon) or amplitude_epsilon <= 0.0:
+        raise ValueError(
+            "The AE checkpoint has an invalid amplitude_epsilon; expected a finite "
+            f"number greater than zero, got {amplitude_epsilon!r}."
+        )
+    result["amplitude_epsilon"] = amplitude_epsilon
     if not is_global:
         return result, raw_checkpoint
 
@@ -257,6 +278,10 @@ def main():
             else ""
         )
     )
+    print(
+        "Using AE log-magnitude transform: "
+        f"log(magnitude + {normalization['amplitude_epsilon']:.6g})"
+    )
 
     dataset = SeismicSTFTDatasetWithMetadata(
         data_dir=args.data_dir,
@@ -272,6 +297,7 @@ def main():
         resample_hz=preprocessing["resample_hz"],
         target_seconds=preprocessing["target_seconds"],
         global_normalization=normalization["mode"] == "global",
+        amplitude_epsilon=normalization["amplitude_epsilon"],
     )
     if normalization["mode"] == "global":
         # Embedding export must use the AE's training bounds, never bounds fit
@@ -327,6 +353,7 @@ def main():
             "target_seconds": preprocessing["target_seconds"],
         },
         "normalization_mode": normalization["mode"],
+        "amplitude_epsilon": normalization["amplitude_epsilon"],
         "global_min": normalization["global_min"],
         "global_max": normalization["global_max"],
         "channels": preprocessing["channels"],

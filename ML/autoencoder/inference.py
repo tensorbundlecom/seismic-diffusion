@@ -18,7 +18,19 @@ def load_model(checkpoint_path, device='cuda', model_type=VariationalAutoencoder
     checkpoint = torch.load(checkpoint_path, map_location=device)
     
     # Get model config
-    config = checkpoint.get('config', {})
+    config = dict(checkpoint.get('config', {}))
+    # Some checkpoints created during the normalization rollout stored these
+    # fields at the top level. Expose them through the returned config so all
+    # inference callers apply the exact training transform.
+    for field_name in (
+        'amplitude_epsilon',
+        'normalization_mode',
+        'global_normalization',
+        'global_min',
+        'global_max',
+    ):
+        if config.get(field_name) is None and checkpoint.get(field_name) is not None:
+            config[field_name] = checkpoint[field_name]
     
     # Create model
     if model_type == VariationalAutoencoder:
@@ -150,6 +162,13 @@ def main():
     nperseg = config.get('nperseg', 256)
     noverlap = config.get('noverlap', 192)
     nfft = config.get('nfft', 256)
+    amplitude_epsilon = float(config.get('amplitude_epsilon', 1.0))
+    normalization_mode = config.get('normalization_mode')
+    global_normalization = (
+        str(normalization_mode).strip().lower() == 'global'
+        if normalization_mode is not None
+        else bool(config.get('global_normalization', False))
+    )
     
     dataset = SeismicSTFTDataset(
         data_dir=args.data_dir,
@@ -159,7 +178,13 @@ def main():
         nfft=nfft,
         normalize=True,
         log_scale=True,
+        amplitude_epsilon=amplitude_epsilon,
+        global_normalization=global_normalization,
     )
+    if global_normalization:
+        dataset.set_global_normalization_stats(
+            config.get('global_min'), config.get('global_max')
+        )
     
     print(f"Dataset size: {len(dataset)}")
     

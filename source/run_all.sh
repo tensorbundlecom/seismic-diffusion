@@ -9,7 +9,7 @@ echo "==> [1/3] Training autoencoder"
 cd "$ROOT/ML/autoencoder"
 bash "$ROOT/source/train_autoencoder.sh"
 
-echo "==> [2/3] Creating embeddings (uses latest AE checkpoint)"
+echo "==> [2/3] Creating embeddings (uses the checkpoint selected in source/create_embeddings.sh)"
 cd "$ROOT/ML/diffusion"
 bash "$ROOT/source/create_embeddings.sh"
 

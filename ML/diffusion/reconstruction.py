@@ -32,11 +32,28 @@ def _read_json(path: Path) -> dict:
 def _normalization_fields(payload: Mapping[str, Any]) -> dict:
     """Extract source.json-compatible normalization fields from a payload."""
     nested = payload.get("normalization")
-    values = nested if isinstance(nested, Mapping) else payload
+    source = payload.get("source")
+    source = source if isinstance(source, Mapping) else {}
+    source_nested = source.get("normalization")
+    source_nested = source_nested if isinstance(source_nested, Mapping) else {}
+
+    def first(*keys: str):
+        # Accept both the direct source.json representation and the aliases
+        # copied into diffusion checkpoint provenance. This also tolerates a
+        # complete source snapshot nested under ``source``.
+        for values in (nested, payload, source_nested, source):
+            if not isinstance(values, Mapping):
+                continue
+            for key in keys:
+                if values.get(key) is not None:
+                    return values[key]
+        return None
+
     return {
-        "mode": values.get("normalization_mode", values.get("mode")),
-        "global_min": values.get("global_min"),
-        "global_max": values.get("global_max"),
+        "mode": first("normalization_mode", "mode"),
+        "global_min": first("global_min"),
+        "global_max": first("global_max"),
+        "amplitude_epsilon": first("amplitude_epsilon"),
     }
 
 
@@ -50,6 +67,7 @@ class ReconstructionSpec:
     global_max: Optional[float] = None
     source_identity: str = "legacy"
     source_origin: str = "legacy"
+    amplitude_epsilon: float = 1.0
 
     @property
     def uses_global_normalization(self) -> bool:
@@ -67,6 +85,7 @@ class ReconstructionSpec:
             "mode": self.mode,
             "global_min": self.global_min,
             "global_max": self.global_max,
+            "amplitude_epsilon": self.amplitude_epsilon,
             "ae_checkpoint": self.ae_checkpoint,
             "source_identity": self.source_identity,
         }
@@ -78,6 +97,7 @@ class ReconstructionSpec:
             "normalization_mode": self.mode,
             "global_min": self.global_min,
             "global_max": self.global_max,
+            "amplitude_epsilon": self.amplitude_epsilon,
             "ae_checkpoint": self.ae_checkpoint,
             "source_identity": self.source_identity,
             "source_origin": self.source_origin,
@@ -90,6 +110,7 @@ def _validate_spec(fields: Mapping[str, Any], ae_checkpoint: Optional[str], *, o
     if mode not in {"global", "per_event"}:
         raise ValueError(f"Unsupported AE normalization mode {mode!r} from {origin}.")
     lo, hi = fields.get("global_min"), fields.get("global_max")
+    amplitude_epsilon = fields.get("amplitude_epsilon")
     if mode == "global":
         if lo is None or hi is None:
             raise ValueError(f"Global AE normalization from {origin} is missing global_min/global_max.")
@@ -98,10 +119,26 @@ def _validate_spec(fields: Mapping[str, Any], ae_checkpoint: Optional[str], *, o
             raise ValueError(
                 f"Invalid global AE normalization range from {origin}: min={lo}, max={hi}."
             )
+        # Checkpoints created before physical-unit normalization used log1p,
+        # whose exact inverse is recovered by epsilon=1.
+        amplitude_epsilon = 1.0 if amplitude_epsilon is None else float(amplitude_epsilon)
+        if not math.isfinite(amplitude_epsilon) or amplitude_epsilon <= 0:
+            raise ValueError(
+                f"Invalid amplitude_epsilon from {origin}: {amplitude_epsilon}."
+            )
     else:
         lo = hi = None
+        amplitude_epsilon = 1.0
     identity = hashlib.sha256(_canonical_json(identity_payload).encode()).hexdigest()[:16]
-    return ReconstructionSpec(mode, ae_checkpoint, lo, hi, identity, origin)
+    return ReconstructionSpec(
+        mode=mode,
+        ae_checkpoint=ae_checkpoint,
+        global_min=lo,
+        global_max=hi,
+        amplitude_epsilon=amplitude_epsilon,
+        source_identity=identity,
+        source_origin=origin,
+    )
 
 
 def resolve_reconstruction_spec(
@@ -164,8 +201,9 @@ def decoded_to_magnitude(decoded, spec: ReconstructionSpec, *, legacy_inv_log_ga
 
     For global AEs this deliberately does *not* clamp ``decoded`` to [0, 1].
     Samples outside that range carry extrapolated log-amplitude information.
-    Only the final log magnitude is floored at zero because ``log1p`` of a
-    non-negative magnitude cannot be negative.
+    New physical-unit AEs use ``log(magnitude + amplitude_epsilon)``. Older
+    global AEs omit epsilon and therefore default to 1, exactly preserving
+    their historical ``expm1`` inverse.
     """
     if spec.uses_global_normalization:
         log_magnitude = decoded * (spec.global_max - spec.global_min) + spec.global_min
@@ -173,14 +211,22 @@ def decoded_to_magnitude(decoded, spec: ReconstructionSpec, *, legacy_inv_log_ga
         # Historical per-event output needs the learned inverse log gain.
         log_magnitude = decoded * legacy_inv_log_gain
 
+    epsilon = spec.amplitude_epsilon if spec.uses_global_normalization else 1.0
+
     if isinstance(log_magnitude, np.ndarray):
-        return np.expm1(np.maximum(log_magnitude, 0.0))
+        if epsilon == 1.0:
+            return np.maximum(np.expm1(log_magnitude), 0.0)
+        return np.maximum(np.exp(log_magnitude) - epsilon, 0.0)
 
     # Keep torch an optional dependency for worker-only numpy operations.
     import torch
     if torch.is_tensor(log_magnitude):
-        return torch.expm1(torch.clamp(log_magnitude, min=0.0))
-    return np.expm1(max(float(log_magnitude), 0.0))
+        if epsilon == 1.0:
+            return torch.clamp(torch.expm1(log_magnitude), min=0.0)
+        return torch.clamp(torch.exp(log_magnitude) - epsilon, min=0.0)
+    if epsilon == 1.0:
+        return max(float(np.expm1(float(log_magnitude))), 0.0)
+    return max(float(np.exp(float(log_magnitude))) - epsilon, 0.0)
 
 
 def postprocess_griffinlim_waveform(wave: np.ndarray, spec: ReconstructionSpec,

@@ -25,3 +25,4 @@ VS30/
 *.npz
 ML/diffusion/wandb/
 .kilo/
+eval/station_response_manifest.json

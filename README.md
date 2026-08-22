@@ -85,6 +85,10 @@ Before applying the bandpass filter, each waveform underwent a series of standar
 
 The filtered waveforms were saved in miniSEED format, preserving the original timing and metadata. This preprocessing ensures that the machine learning models train on clean signals that represent actual ground motion from earthquakes rather than instrumental or environmental noise.
 
+### Physical-unit preprocessing
+
+For globally normalized training, use the separate response-corrected acceleration archive rather than mixing count-domain and corrected traces. The strict StationXML coverage gate, exact processing sequence, provenance manifests, QC checks, and raw-versus-corrected review plots are documented in [Physical-unit waveform preprocessing](docs/features/physical-unit-waveform-preprocessing.md).
+
 ## Machine Learning Approaches
 
 We explored several deep learning architectures for learning compressed representations of seismic waveforms, with the eventual goal of applying diffusion models for waveform generation.

@@ -4,7 +4,7 @@
 
 ## TL;DR
 
-Latent diffusion now fits its latent and continuous-conditioning normalization statistics on the final training rows only, after validation and held-out-station rows are selected. Schema-v2 diffusion checkpoints preserve the full embedding/AE contract needed to reconstruct global-normalized spectrograms. For a global-normalized AE, reconstruction applies the exact saved log-domain inverse followed by `expm1`; it does not use the legacy amplitude MLP, predicted gain, or post–Griffin–Lim waveform rescale.
+Latent diffusion fits latent and continuous-conditioning statistics on final training rows only. Schema-v2 checkpoints preserve the complete AE contract needed to reconstruct global-normalized spectrograms, including the physical-amplitude epsilon. Reconstruction applies `exp(log_magnitude) - amplitude_epsilon`; it does not use the legacy amplitude MLP, predicted gain, or post–Griffin–Lim waveform rescale.
 
 ## Why this exists
 
@@ -48,7 +48,7 @@ Do not overwrite an embedding export and assume an existing diffusion checkpoint
 
 Each checkpoint directory contains `training_config.json` plus checkpoint-local copies of `embedding_source.json` and `embedding_scale.json`. The config contains:
 
-- `embedding_provenance`: source file identity and hash, a source snapshot, AE checkpoint path and SHA-256 hash, AE normalization mode/bounds, STFT settings, channels, embedding count, and latent shape.
+- `embedding_provenance`: source file identity and hash, a source snapshot, AE checkpoint path and SHA-256 hash, AE normalization mode/bounds/amplitude epsilon, STFT settings, channels, embedding count, and latent shape.
 - `data_normalization`: training-only latent mean and standard deviation.
 - `conditioning_normalization`: training-only continuous-conditioning mean and standard deviation.
 - `split`: training, validation, and held-out embedding indices plus held-out station IDs.
@@ -62,8 +62,10 @@ For a global-normalized AE, decoded values are inverted exactly using the bounds
 
 ```text
 log_magnitude = decoded * (global_max - global_min) + global_min
-magnitude = expm1(log_magnitude)
+magnitude = max(exp(log_magnitude) - amplitude_epsilon, 0)
 ```
+
+Legacy global checkpoints lacking `amplitude_epsilon` use `1.0`, which reduces exactly to the historical `expm1` inverse.
 
 The inverse intentionally does not clamp a decoded value to `[0, 1]`; generated values outside that interval remain part of the learned output. The magnitude is then passed to Griffin–Lim as configured by the recorded STFT settings.
 
