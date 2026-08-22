@@ -1,0 +1,23 @@
+program: train.py
+entity: ataerdem
+project: seismic-diffusion
+name: station-id-sweep
+method: bayes
+metric:
+  name: Loss/val
+  goal: minimize
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --prediction_target=x0
+  - --data_mode=latent
+  - --log_images_every_n_batches=1000
+  - --use_vs30
+  - --experiment_name=ddpm_without_station_ids
+  - --num_epochs=10
+  - --wandb_project=seismic-diffusion
+  - --include_station_id=${include_station_id}
+parameters:
+  include_station_id:
+    values: [true, false]

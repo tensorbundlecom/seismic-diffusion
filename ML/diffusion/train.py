@@ -315,20 +315,34 @@ parser.add_argument(
 )
 parser.add_argument(
     "--use_vs30",
-    action="store_true",
+    type=str,
+    default="false",
     help=(
         "Add the per-station Vs30 (site condition, m/s) as an extra continuous "
-        "conditioning feature. Requires the station Vs30 lookup "
-        "(see compute_station_vs30.py)."
+        "conditioning feature. Use --use_vs30 true or --use_vs30 false "
+        "(default: false). Requires the station Vs30 lookup "
+        "(see compute_station_vs30.py) when true."
     ),
 )
 parser.add_argument(
     "--include_station_id",
-    action=argparse.BooleanOptionalAction,
-    default=True,
+    type=str,
+    default="true",
     help=(
-        "Condition the diffusion model on a learned per-station ID embedding "
-        "(default: enabled). Use --no-include_station_id to omit station IDs."
+        "Condition the diffusion model on a learned per-station ID embedding. "
+        "Use --include_station_id true or --include_station_id false "
+        "(default: true). Any case accepted."
+    ),
+)
+parser.add_argument(
+    "--num_held_out_stations",
+    type=int,
+    default=5,
+    help=(
+        "When >0, hold out this many random stations (chosen by --split_seed) "
+        "entirely from training and validation so their loss can be monitored as "
+        "an unseen-station generalization signal. Most useful with "
+        "--no-include_station_id. Set <=0 to disable."
     ),
 )
 parser.add_argument(
@@ -407,6 +421,8 @@ parser.add_argument(
     help="How many step_* checkpoints to keep when batch checkpointing is enabled.",
 )
 args = parser.parse_args()
+args.include_station_id = str(args.include_station_id).strip().lower() == "true"
+args.use_vs30 = str(args.use_vs30).strip().lower() == "true"
 
 # --- Config ---
 NUM_EPOCHS = int(args.num_epochs)
@@ -428,6 +444,7 @@ CHANNEL_EMB_DIM = 16
 NUM_CONTINUOUS = 7 if args.use_vs30 else 6
 TRAINING_TYPE = args.training_type
 VAL_EVERY_N_EPOCHS = int(args.val_every_n_epochs)
+NUM_HELD_OUT_STATIONS = int(args.num_held_out_stations)
 
 if args.experiment_name is not None:
     EXPERIMENT_NAME = args.experiment_name.strip()
@@ -547,6 +564,42 @@ print(
     f"(val_fraction={val_fraction}, seed={args.split_seed})"
 )
 
+# --- Held-out station evaluation ---
+# When training without station-id conditioning, hold out a few random stations
+# entirely from training (and the regular val split) so we can monitor how the
+# model generalizes to unseen stations. The chosen stations are reproducible via
+# --split_seed.
+held_out_indices: List[int] = []
+held_out_station_ids: List[int] = []
+if NUM_HELD_OUT_STATIONS > 0:
+    station_ids = sorted({int(m["station_idx"]) for m in metadatas})
+    if len(station_ids) <= NUM_HELD_OUT_STATIONS:
+        raise ValueError(
+            f"--num_held_out_stations={NUM_HELD_OUT_STATIONS} must be less than the "
+            f"total number of stations ({len(station_ids)})."
+        )
+    station_id_to_indices: Dict[int, List[int]] = {}
+    for i, m in enumerate(metadatas):
+        station_id_to_indices.setdefault(int(m["station_idx"]), []).append(i)
+
+    _rng = np.random.default_rng(int(args.split_seed))
+    held_out_station_ids = sorted(
+        _rng.choice(station_ids, size=NUM_HELD_OUT_STATIONS, replace=False).tolist()
+    )
+    for sid in held_out_station_ids:
+        held_out_indices.extend(station_id_to_indices[sid])
+    held_out_indices = sorted(held_out_indices)
+    held_out_set = set(held_out_indices)
+    train_indices = [i for i in train_indices if i not in held_out_set]
+    val_indices = [i for i in val_indices if i not in held_out_set]
+
+    if len(train_indices) == 0:
+        raise ValueError("Train split is empty after removing held-out stations.")
+    print(
+        f"[train] held-out stations ({NUM_HELD_OUT_STATIONS}): {held_out_station_ids} "
+        f"-> {len(held_out_indices)} samples excluded from train/val"
+    )
+
 # Keep the fixed preview sample inside the train split for stable monitoring.
 fixed_real_idx = train_indices[0]
 fixed_real_cond = raw_cond_vectors[fixed_real_idx]
@@ -570,6 +623,7 @@ if args.data_mode == "latent":
     full_dataset = TensorDataset(train_data, cond_vectors)
     train_dataset = Subset(full_dataset, train_indices)
     val_dataset = Subset(full_dataset, val_indices) if val_indices else None
+    held_out_dataset = Subset(full_dataset, held_out_indices) if held_out_indices else None
     data_shape = tuple(train_data.shape[1:])
     num_workers = 0
 
@@ -601,6 +655,7 @@ else:
     data_shape = tuple(x0.shape)
     train_dataset = Subset(stft_dataset, train_indices)
     val_dataset = Subset(stft_dataset, val_indices) if val_indices else None
+    held_out_dataset = Subset(stft_dataset, held_out_indices) if held_out_indices else None
     num_workers = max(0, int(args.num_workers))
 
     print(
@@ -622,6 +677,17 @@ val_dataloader = None
 if val_dataset is not None and len(val_dataset) > 0:
     val_dataloader = DataLoader(
         val_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=(DEVICE == "cuda"),
+        persistent_workers=(num_workers > 0),
+    )
+
+held_out_dataloader = None
+if held_out_dataset is not None and len(held_out_dataset) > 0:
+    held_out_dataloader = DataLoader(
+        held_out_dataset,
         batch_size=BATCH_SIZE,
         shuffle=False,
         num_workers=num_workers,
@@ -691,6 +757,9 @@ if wb is not None:
             "num_val": len(val_indices),
             "num_stations": num_stations,
             "num_channels": num_channels,
+            "num_held_out_stations": len(held_out_station_ids),
+            "held_out_station_ids": held_out_station_ids,
+            "num_held_out_samples": len(held_out_indices),
             "stft_freq_bins_resolved": scale_payload.get("stft_freq_bins"),
             "stft_time_bins_resolved": scale_payload.get("stft_time_bins"),
             "total_train_steps": NUM_EPOCHS * max(1, len(dataloader)),
@@ -935,6 +1004,20 @@ for epoch in range(NUM_EPOCHS):
         writer.add_scalar("Loss/val", val_loss, epoch)
         if wb is not None:
             wb.log({"Loss/val": val_loss}, step=((epoch + 1) * len(dataloader)))
+
+    if held_out_dataloader is not None and VAL_EVERY_N_EPOCHS > 0 and (
+        epoch + 1
+    ) % VAL_EVERY_N_EPOCHS == 0:
+        held_out_loss = _evaluate(held_out_dataloader)
+        print(
+            f"Epoch {epoch + 1}/{NUM_EPOCHS} - Held-out Station Loss: {held_out_loss:.6f}"
+        )
+        writer.add_scalar("Loss/val_heldout", held_out_loss, epoch)
+        if wb is not None:
+            wb.log(
+                {"Loss/val_heldout": held_out_loss},
+                step=((epoch + 1) * len(dataloader)),
+            )
 
     if (epoch + 1) % CHECKPOINT_EVERY_N_EPOCHS == 0:
         _save_checkpoint(f"epoch_{epoch + 1}")
