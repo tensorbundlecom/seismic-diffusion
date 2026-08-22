@@ -15,8 +15,9 @@ Both real and synthetic waveforms are deconvolved with the station's instrument
 response (FDSN level="response", see fetch_station_responses.py) so amplitudes
 are ground acceleration in m/s^2 like the paper, not digitizer counts. The
 synthetic pipeline matches demo/app.py: diffusion sampling -> VAE decode ->
-Griffin-Lim with the AmplitudeMLP's predicted inv-log gain -> rescale to the
-predicted per-channel amplitude (counts) -> response deconvolution.
+Griffin-Lim -> response deconvolution. Legacy per-event-normalized AEs also
+apply the historical AmplitudeMLP gain and waveform rescale; globally
+normalized AEs recover magnitude directly and bypass that model.
 
 Run from the project root:
     python eval/evaluate_first_order.py compute [--steps 1000] [--batch_size 64] [--limit N]
@@ -49,6 +50,14 @@ from ML.autoencoder.inference import load_model        # noqa: E402
 from ML.diffusion.model import (                        # noqa: E402
     DiffusionUNet2D,
     create_conditioning_vector,
+)
+from ML.diffusion.reconstruction import (               # noqa: E402
+    ReconstructionSpec,
+    checkpoint_stft_config,
+    decoded_to_magnitude,
+    diffusion_cache_tag,
+    postprocess_griffinlim_waveform,
+    resolve_reconstruction_spec,
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -84,6 +93,28 @@ FREQ_BINS = int(STFT_CFG["nfft"]) // 2 + 1
 
 ENV_LEN = int(np.ceil(TARGET_SAMPLES / ENV_DECIMATE))
 SPEC_LEN = int(np.ceil((TARGET_SAMPLES // 2 + 1) / SPEC_DECIMATE))
+
+
+def configure_stft(stft: dict | None) -> None:
+    """Set reconstruction geometry from checkpoint-bound embedding provenance."""
+    if not stft:
+        return
+    global STFT_CFG, FS, TARGET_SECONDS, TARGET_SAMPLES, HOP, FREQ_BINS, ENV_LEN, SPEC_LEN
+    merged = dict(STFT_CFG)
+    merged.update(stft)
+    nperseg = int(merged["nperseg"])
+    noverlap = int(merged["noverlap"])
+    nfft = int(merged["nfft"])
+    if nperseg <= 0 or nfft < nperseg or not 0 <= noverlap < nperseg:
+        raise ValueError(f"Invalid checkpoint STFT config: {merged}")
+    STFT_CFG = merged
+    FS = float(merged.get("resample_hz", 100.0))
+    TARGET_SECONDS = float(merged.get("target_seconds", 70.0))
+    TARGET_SAMPLES = int(round(FS * TARGET_SECONDS))
+    HOP = nperseg - noverlap
+    FREQ_BINS = nfft // 2 + 1
+    ENV_LEN = int(np.ceil(TARGET_SAMPLES / ENV_DECIMATE))
+    SPEC_LEN = int(np.ceil((TARGET_SAMPLES // 2 + 1) / SPEC_DECIMATE))
 
 
 # ── Response deconvolution (runs in worker processes) ─────────────────────────
@@ -205,14 +236,19 @@ def _process_real(args):
 
 
 def _process_synth(args):
-    """Worker: decoded spectrogram channel -> Griffin-Lim -> rescale (counts)
-    -> response deconvolution -> features. Returns (counts_wave, env, fas)."""
-    mag, inv_log_gain, amp_scale, metric, gl_iters, station, channel_code, event_id = args
+    """Worker: decoded AE channel -> Griffin-Lim -> features.
+
+    Globally-normalized AEs supply physical magnitude directly, so the legacy
+    AmplitudeMLP gain and waveform rescaling are intentionally bypassed.
+    """
+    decoded, reconstruction, inv_log_gain, amp_scale, metric, gl_iters, station, channel_code, event_id = args
     try:
         import librosa
 
-        m = np.clip(mag.astype(np.float64), 0.0, None)
-        m = np.expm1(m * float(np.clip(inv_log_gain, 0.1, 20.0)))
+        m = decoded_to_magnitude(
+            np.asarray(decoded, dtype=np.float64), reconstruction,
+            legacy_inv_log_gain=float(np.clip(inv_log_gain, 0.1, 20.0)),
+        )
 
         # Match demo/app.py: make sure frame count covers the full window.
         native_frames = int(round(TARGET_SAMPLES / HOP)) + 1
@@ -233,9 +269,9 @@ def _process_synth(args):
             random_state=GL_RANDOM_STATE,
         ).astype(np.float64)
 
-        ref = float(np.max(np.abs(wave))) if metric == "max" else float(np.std(wave))
-        if ref > 1e-10:
-            wave = wave / ref * float(amp_scale)
+        wave = postprocess_griffinlim_waveform(
+            wave, reconstruction, amp_scale=amp_scale, metric=metric
+        )
         wave = _crop_pad(wave)
 
         acc = deconvolve_to_acc(wave, station, channel_code, event_id)
@@ -310,8 +346,11 @@ def sample_batch(unet, scheduler, cond_batch, data_shape, steps, training_type, 
 
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
-def cache_path(ckpt_dir: Path, steps: int, channel: int) -> Path:
-    tag = f"{ckpt_dir.parent.name}_{ckpt_dir.name}_steps{steps}_ch{CHANNEL_NAMES[channel]}_acc"
+def cache_path(ckpt_dir: Path, steps: int, channel: int,
+               reconstruction: ReconstructionSpec, ckpt_cfg: dict) -> Path:
+    model_tag = diffusion_cache_tag(ckpt_dir, ckpt_cfg, reconstruction)
+    tag = (f"{ckpt_dir.parent.name}_{ckpt_dir.name}_steps{steps}_ch{CHANNEL_NAMES[channel]}"
+           f"_model{model_tag}_acc")
     return EVAL_DIR / f"cache_{tag}.npz"
 
 
@@ -355,11 +394,6 @@ def run_compute(args):
     vs30_path = DIFF_DIR / "embeddings" / "station_vs30.json"
     station_vs30 = json.load(open(vs30_path)) if vs30_path.exists() else None
 
-    test_indices = list(_scale["val_indices"])
-    if args.limit and args.limit < len(test_indices):
-        # Evenly spaced subset keeps the magnitude distribution representative.
-        picks = np.linspace(0, len(test_indices) - 1, num=args.limit, dtype=int)
-        test_indices = [test_indices[i] for i in picks]
     channel = CHANNEL_NAMES.index(args.channel)
 
     def _rel(p):
@@ -370,43 +404,73 @@ def run_compute(args):
 
     ckpt_dir = Path(args.checkpoint) if args.checkpoint else find_latest_checkpoint()
     unet, scheduler, ckpt_cfg = load_diffusion(ckpt_dir)
+    checkpoint_split = ckpt_cfg.get("split", {})
+    test_indices = list(checkpoint_split.get("val_indices", _scale["val_indices"]))
+    if args.limit and args.limit < len(test_indices):
+        # Evenly spaced subset keeps the magnitude distribution representative.
+        picks = np.linspace(0, len(test_indices) - 1, num=args.limit, dtype=int)
+        test_indices = [test_indices[i] for i in picks]
     training_type = ckpt_cfg.get("training_type", "ddpm")
     data_shape = tuple(ckpt_cfg["data_shape"])
     data_mode = ckpt_cfg.get("data_mode", "latent")
-    emb_std = float(ckpt_cfg.get("emb_std", 1.0))
-    emb_mean = float(ckpt_cfg.get("emb_mean", 0.0))
+    data_normalization = ckpt_cfg.get("data_normalization", {})
+    emb_std = float(data_normalization.get("std", ckpt_cfg.get("emb_std", 1.0)))
+    emb_mean = float(data_normalization.get("mean", ckpt_cfg.get("emb_mean", 0.0)))
     ckpt_source = "--checkpoint" if args.checkpoint else "default: latest checkpoint by mtime"
     print(f"[eval] diffusion model: {_rel(ckpt_dir)}  ({ckpt_source})")
     print(f"[eval]   type={training_type}  mode={data_mode}  shape={data_shape}  "
           f"steps={args.steps}")
 
+    source_path = ckpt_dir / "embedding_source.json"
+    if not source_path.exists():
+        source_path = DIFF_DIR / "embeddings" / "source.json"
+    reconstruction = resolve_reconstruction_spec(
+        ckpt_cfg, embeddings_source_path=source_path,
+        ae_checkpoint_override=args.ae_checkpoint,
+    )
+    print(f"[eval] AE normalization: {reconstruction.mode} "
+          f"(source={reconstruction.source_origin}, id={reconstruction.source_identity})")
+    configure_stft(checkpoint_stft_config(ckpt_cfg, embeddings_source_path=source_path))
+    print(f"[eval] STFT reconstruction: nperseg={STFT_CFG['nperseg']} "
+          f"noverlap={STFT_CFG['noverlap']} nfft={STFT_CFG['nfft']} "
+          f"fs={FS:g}Hz duration={TARGET_SECONDS:g}s")
+
     ae_model = None
     if data_mode == "latent":
-        ae_ckpt = args.ae_checkpoint or _source.get("ae_checkpoint")
-        ae_source = "--ae_checkpoint" if args.ae_checkpoint else "default: embeddings/source.json"
+        ae_ckpt = reconstruction.ae_checkpoint
+        if not ae_ckpt:
+            raise ValueError("Latent diffusion evaluation needs an AE checkpoint in checkpoint provenance "
+                             "or --ae_checkpoint.")
+        ae_source = "--ae_checkpoint" if args.ae_checkpoint else reconstruction.source_origin
         print(f"[eval] AE decoder: {_rel(ae_ckpt)}  ({ae_source})")
         ae_model, _ = load_model(ae_ckpt, device=DEVICE)
         ae_model.eval()
 
-    amp_model, amp_stats = load_amplitude()
-    amp_metric = amp_stats.get("metric", "std")
-    log_std_mean = torch.tensor(amp_stats["log_std_mean"], dtype=torch.float32)
-    log_std_scale = torch.tensor(amp_stats["log_std_scale"], dtype=torch.float32)
-    gain_mean = torch.tensor(amp_stats["gain_mean"], dtype=torch.float32)
-    gain_scale = torch.tensor(amp_stats["gain_scale"], dtype=torch.float32)
+    amp_model = amp_stats = None
+    amp_metric = "max"
+    if reconstruction.uses_amplitude_model:
+        amp_model, amp_stats = load_amplitude()
+        amp_metric = amp_stats.get("metric", "std")
+        log_std_mean = torch.tensor(amp_stats["log_std_mean"], dtype=torch.float32)
+        log_std_scale = torch.tensor(amp_stats["log_std_scale"], dtype=torch.float32)
+        gain_mean = torch.tensor(amp_stats["gain_mean"], dtype=torch.float32)
+        gain_scale = torch.tensor(amp_stats["gain_scale"], dtype=torch.float32)
 
-    cond_mean = torch.tensor(_scale["cond_mean"], dtype=torch.float32)
-    cond_std = torch.tensor(_scale["cond_std"], dtype=torch.float32).clamp(min=1e-8)
+    condition_normalization = ckpt_cfg.get("conditioning_normalization", {})
+    cond_mean = torch.tensor(condition_normalization.get("mean", _scale["cond_mean"]),
+                             dtype=torch.float32)
+    cond_std = torch.tensor(condition_normalization.get("std", _scale["cond_std"]),
+                            dtype=torch.float32).clamp(min=1e-8)
 
     diff_nc = int(unet.num_continuous)
-    amp_nc = int(amp_model.num_continuous)
+    amp_nc = int(amp_model.num_continuous) if amp_model is not None else 0
     need_vs30 = max(diff_nc, amp_nc) >= 7
     if need_vs30 and station_vs30 is None:
         raise FileNotFoundError("Checkpoint expects Vs30 conditioning but "
                                 "embeddings/station_vs30.json is missing.")
 
     def build_conds(meta):
-        """Raw conditioning -> (diffusion cond row, amplitude cond row)."""
+        """Raw conditioning -> (diffusion cond row, legacy amplitude row)."""
         full = create_conditioning_vector(
             meta, station_locations, station_vs30 if need_vs30 else None
         )
@@ -422,11 +486,13 @@ def run_compute(args):
         if unet.use_channel:
             parts.append(d[nc_full + 1:nc_full + 2])           # channel idx
         diff_cond = torch.cat(parts)
+        if amp_model is None:
+            return diff_cond, None
         a = normed(amp_nc)
         amp_cond = torch.cat([a[:amp_nc], a[nc_full:nc_full + 1]])
         return diff_cond, amp_cond
 
-    path = cache_path(ckpt_dir, args.steps, channel)
+    path = cache_path(ckpt_dir, args.steps, channel, reconstruction, ckpt_cfg)
     cache = init_or_load_cache(path, test_indices)
     for j, idx in enumerate(test_indices):
         cache["mags"][j] = float(metadatas[idx]["magnitude"])
@@ -471,15 +537,17 @@ def run_compute(args):
             metas = [metadatas[test_indices[j]] for j in rows]
             conds = [build_conds(m) for m in metas]
             diff_cond = torch.stack([c[0] for c in conds]).unsqueeze(1).to(DEVICE)
-            amp_cond = torch.stack([c[1] for c in conds]).to(DEVICE)
-
-            with torch.no_grad():
-                raw_pred = amp_model(amp_cond).cpu()
-            amp_scales = torch.exp(raw_pred[:, :3] * log_std_scale + log_std_mean)
-            if raw_pred.shape[1] >= 6:
-                gains = (raw_pred[:, 3:6] * gain_scale + gain_mean).clamp(0.1, 20.0)
+            if amp_model is not None:
+                amp_cond = torch.stack([c[1] for c in conds]).to(DEVICE)
+                with torch.no_grad():
+                    raw_pred = amp_model(amp_cond).cpu()
+                amp_scales = torch.exp(raw_pred[:, :3] * log_std_scale + log_std_mean)
+                if raw_pred.shape[1] >= 6:
+                    gains = (raw_pred[:, 3:6] * gain_scale + gain_mean).clamp(0.1, 20.0)
+                else:
+                    gains = torch.full_like(amp_scales, 1.0)
             else:
-                gains = torch.full_like(amp_scales, 1.0)
+                amp_scales = gains = None
 
             x = sample_batch(unet, scheduler, diff_cond, data_shape,
                              args.steps, training_type, seed=args.seed + start)
@@ -489,11 +557,15 @@ def run_compute(args):
                     specs = ae_model.decode(x)
             else:
                 specs = x
-            specs = specs.clamp(min=0.0)[:, :3, :FREQ_BINS, :].cpu().numpy()
+            # Do not clip the decoded normalized output: values above one are
+            # valid extrapolated global log-amplitudes.
+            specs = specs[:, :3, :FREQ_BINS, :].cpu().numpy()
 
             jobs = [
-                (specs[k, channel], float(gains[k, channel]),
-                 float(amp_scales[k, channel]), amp_metric, args.gl_iters,
+                (specs[k, channel], reconstruction,
+                 float(gains[k, channel]) if gains is not None else 1.0,
+                 float(amp_scales[k, channel]) if amp_scales is not None else None,
+                 amp_metric, args.gl_iters,
                  *response_args(metas[k]))
                 for k in range(len(rows))
             ]
@@ -637,7 +709,8 @@ def main():
                         help="Diffusion checkpoint dir (default: most recent).")
     parser.add_argument("--ae_checkpoint", type=str, default=None,
                         help="Autoencoder checkpoint used to decode latents. "
-                             "Default: the one recorded in embeddings/source.json. "
+                             "Default: the one recorded by the diffusion checkpoint "
+                             "(legacy fallback: embeddings/source.json). "
                              "Must be the AE the diffusion latents were created with.")
     parser.add_argument("--steps", type=int, default=1000,
                         help="DDPM inference steps (flow matching caps at 100).")

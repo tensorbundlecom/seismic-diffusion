@@ -252,8 +252,8 @@ def run_example(args, metadatas, station_locations, synth_cache_path,
                 indices, channel, channel_idx):
     """Generate --n_realizations synthetics for one record's conditioning and
     store the cAI curves. Reuses the model stack of evaluate_first_order.py."""
-    import torch
     import evaluate_first_order as fo
+    from gwm_sampling import GwmSampler
 
     if args.example_index >= 0:
         ex_idx = args.example_index
@@ -268,67 +268,15 @@ def run_example(args, metadatas, station_locations, synth_cache_path,
     else:  # default: largest-magnitude test-split record
         ex_idx = max(indices, key=lambda i: float(metadatas[i]["magnitude"]))
     meta = metadatas[ex_idx]
+    sampler = GwmSampler(args.checkpoint, args.ae_checkpoint)
     out_path = OUT_DIR / (f"example_{synth_cache_path.stem.removeprefix('cache_')}"
-                          f"_idx{ex_idx}_n{args.n_realizations}.npz")
+                          f"_idx{ex_idx}_model{sampler.cache_tag}"
+                          f"_n{args.n_realizations}.npz")
     if out_path.exists():
         print(f"[eval] example cache exists: {out_path.name}")
         return out_path
     print(f"[eval] example record {ex_idx}: M{meta['magnitude']} "
           f"station {meta['station_name']}, {args.n_realizations} realizations")
-
-    ckpt_dir = Path(args.checkpoint) if args.checkpoint else fo.find_latest_checkpoint()
-    unet, scheduler, ckpt_cfg = fo.load_diffusion(ckpt_dir)
-    training_type = ckpt_cfg.get("training_type", "ddpm")
-    data_shape = tuple(ckpt_cfg["data_shape"])
-    data_mode = ckpt_cfg.get("data_mode", "latent")
-    emb_std = float(ckpt_cfg.get("emb_std", 1.0))
-    emb_mean = float(ckpt_cfg.get("emb_mean", 0.0))
-    ae_model = None
-    if data_mode == "latent":
-        ae_ckpt = args.ae_checkpoint or fo._source.get("ae_checkpoint")
-        ae_model, _ = fo.load_model(ae_ckpt, device=fo.DEVICE)
-        ae_model.eval()
-    amp_model, amp_stats = fo.load_amplitude()
-    amp_metric = amp_stats.get("metric", "std")
-    log_std_mean = torch.tensor(amp_stats["log_std_mean"], dtype=torch.float32)
-    log_std_scale = torch.tensor(amp_stats["log_std_scale"], dtype=torch.float32)
-    gain_mean = torch.tensor(amp_stats["gain_mean"], dtype=torch.float32)
-    gain_scale = torch.tensor(amp_stats["gain_scale"], dtype=torch.float32)
-
-    # Conditioning, normalized exactly as in evaluate_first_order.run_compute.
-    from ML.diffusion.model import create_conditioning_vector
-
-    vs30_path = DIFF_DIR / "embeddings" / "station_vs30.json"
-    station_vs30 = json.load(open(vs30_path)) if vs30_path.exists() else None
-    cond_mean = torch.tensor(fo._scale["cond_mean"], dtype=torch.float32)
-    cond_std = torch.tensor(fo._scale["cond_std"], dtype=torch.float32).clamp(min=1e-8)
-    diff_nc = int(unet.num_continuous)
-    amp_nc = int(amp_model.num_continuous)
-    need_vs30 = max(diff_nc, amp_nc) >= 7
-    full = create_conditioning_vector(
-        meta, station_locations, station_vs30 if need_vs30 else None)
-    nc_full = full.shape[0] - 2
-
-    def normed(nc):
-        v = full.clone()
-        v[:nc] = (v[:nc] - cond_mean[:nc]) / cond_std[:nc]
-        return v
-
-    d = normed(diff_nc)
-    parts = [d[:diff_nc], d[nc_full:nc_full + 1]]
-    if unet.use_channel:
-        parts.append(d[nc_full + 1:nc_full + 2])
-    diff_cond = torch.cat(parts)
-    a = normed(amp_nc)
-    amp_cond = torch.cat([a[:amp_nc], a[nc_full:nc_full + 1]])
-
-    with torch.no_grad():
-        raw = amp_model(amp_cond.unsqueeze(0).to(fo.DEVICE)).cpu()[0]
-    amp_scales = torch.exp(raw[:3] * log_std_scale + log_std_mean)
-    if raw.shape[0] >= 6:
-        gains = (raw[3:6] * gain_scale + gain_mean).clamp(0.1, 20.0)
-    else:
-        gains = torch.full_like(amp_scales, 1.0)
 
     station = meta["station_name"]
     code = f"{meta.get('channel_type', 'HH')}{channel}"
@@ -340,27 +288,12 @@ def run_example(args, metadatas, station_locations, synth_cache_path,
     with ProcessPoolExecutor(max_workers=args.num_workers) as pool:
         for start in range(0, args.n_realizations, args.batch_size):
             b = min(args.batch_size, args.n_realizations - start)
-            cond_batch = diff_cond.repeat(b, 1).unsqueeze(1).to(fo.DEVICE)
-            x = fo.sample_batch(unet, scheduler, cond_batch, data_shape,
-                                args.steps, training_type, seed=args.seed + start)
-            x = x * emb_std + emb_mean
-            if data_mode == "latent":
-                with torch.no_grad():
-                    specs = ae_model.decode(x)
-            else:
-                specs = x
-            specs = specs.clamp(min=0.0)[:, :3, :fo.FREQ_BINS, :].cpu().numpy()
-            jobs = [
-                (specs[k, channel_idx], float(gains[channel_idx]),
-                 float(amp_scales[channel_idx]), amp_metric, args.gl_iters,
-                 station, code, event_id)
-                for k in range(b)
-            ]
-            for k, out in zip(range(start, start + b), pool.map(fo._process_synth, jobs)):
-                if out is None:
+            waves = sampler.generate([meta] * b, args.steps, args.gl_iters,
+                                     args.seed + start, pool, channel_idx=channel_idx)
+            for k, wave in zip(range(start, start + b), waves):
+                if wave is None:
                     continue
-                acc = _deconvolve(out[0].astype(np.float64), station, code,
-                                  event_id, "ACC")
+                acc = _deconvolve(wave, station, code, event_id, "ACC")
                 if acc is not None:
                     cai_synth[k] = arias_curve(acc)[::CAI_DECIMATE]
             done += b

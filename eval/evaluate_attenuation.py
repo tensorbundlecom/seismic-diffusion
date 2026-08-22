@@ -27,9 +27,9 @@ Adaptations vs the paper (documented, not corrected):
     spans the full --mag_range (default 2-3) while the GWM/GMM curves are
     evaluated at its center, so part of the data scatter is magnitude
     scaling within the bin.
-  - The AmplitudeMLP pins each synthetic's counts-domain peak
-    deterministically (see evaluate_distributions.py), so the GWM band here
-    is a lower bound on the model's conditional variability.
+  - Legacy per-event-normalized AEs use an AmplitudeMLP that pins each
+    synthetic's counts-domain peak deterministically. Globally normalized AEs
+    instead recover amplitude from the decoded spectrogram itself.
 
 SA implementation: relative-displacement transfer function in the frequency
 domain (zero-padded FFT), PSA = omega_n^2 * max|u|, 5% damping.
@@ -313,58 +313,19 @@ def run_compute(args):
     r_hyp_grid = r_hyp_grid[r_hyp_grid > depth + 0.5]  # need r_epi > 0
     r_epi_grid = np.sqrt(r_hyp_grid ** 2 - depth ** 2)
 
+    # Constructing the sampler also resolves the checkpoint-bound AE contract.
+    # Its content-addressed tag prevents stale legacy/global reconstructions
+    # from sharing an evaluation cache.
+    from gwm_sampling import GwmSampler
+    sampler = GwmSampler(args.checkpoint, args.ae_checkpoint)
     sweep_path = OUT_DIR / (f"att_sweep_{tag}_M{scen_mag:g}_{sta_name}"
+                            f"_model{sampler.cache_tag}"
                             f"_n{args.n_realizations}.npz")
     if sweep_path.exists():
         print(f"[eval] sweep cache exists: {sweep_path.name}")
         return real_path, sweep_path
 
     # ── GWM sweep ────────────────────────────────────────────────────────────
-    import torch
-    import evaluate_first_order as fo
-    from ML.diffusion.model import create_conditioning_vector
-
-    ckpt_dir = Path(args.checkpoint) if args.checkpoint else fo.find_latest_checkpoint()
-    unet, scheduler, ckpt_cfg = fo.load_diffusion(ckpt_dir)
-    training_type = ckpt_cfg.get("training_type", "ddpm")
-    data_shape = tuple(ckpt_cfg["data_shape"])
-    data_mode = ckpt_cfg.get("data_mode", "latent")
-    emb_std = float(ckpt_cfg.get("emb_std", 1.0))
-    emb_mean = float(ckpt_cfg.get("emb_mean", 0.0))
-    ae_model = None
-    if data_mode == "latent":
-        ae_ckpt = args.ae_checkpoint or fo._source.get("ae_checkpoint")
-        ae_model, _ = fo.load_model(ae_ckpt, device=fo.DEVICE)
-        ae_model.eval()
-    amp_model, amp_stats = fo.load_amplitude()
-    amp_metric = amp_stats.get("metric", "std")
-    log_std_mean = torch.tensor(amp_stats["log_std_mean"], dtype=torch.float32)
-    log_std_scale = torch.tensor(amp_stats["log_std_scale"], dtype=torch.float32)
-    gain_mean = torch.tensor(amp_stats["gain_mean"], dtype=torch.float32)
-    gain_scale = torch.tensor(amp_stats["gain_scale"], dtype=torch.float32)
-    cond_mean = torch.tensor(fo._scale["cond_mean"], dtype=torch.float32)
-    cond_std = torch.tensor(fo._scale["cond_std"], dtype=torch.float32).clamp(min=1e-8)
-    diff_nc = int(unet.num_continuous)
-    amp_nc = int(amp_model.num_continuous)
-    need_vs30 = max(diff_nc, amp_nc) >= 7
-
-    def build_conds(meta):
-        full = create_conditioning_vector(
-            meta, station_locations, station_vs30 if need_vs30 else None)
-        nc_full = full.shape[0] - 2
-
-        def normed(nc):
-            v = full.clone()
-            v[:nc] = (v[:nc] - cond_mean[:nc]) / cond_std[:nc]
-            return v
-
-        d = normed(diff_nc)
-        parts = [d[:diff_nc], d[nc_full:nc_full + 1]]
-        if unet.use_channel:
-            parts.append(d[nc_full + 1:nc_full + 2])
-        a = normed(amp_nc)
-        return torch.cat(parts), torch.cat([a[:amp_nc], a[nc_full:nc_full + 1]])
-
     # One fabricated meta per grid distance (event on the median back-azimuth).
     metas = []
     for d_epi in r_epi_grid:
@@ -385,32 +346,9 @@ def run_compute(args):
     with ProcessPoolExecutor(max_workers=args.num_workers) as pool:
         for start in range(0, len(pairs), args.batch_size):
             batch = pairs[start:start + args.batch_size]
-            conds = [build_conds(metas[di]) for di, _ in batch]
-            diff_cond = torch.stack([c[0] for c in conds]).unsqueeze(1).to(fo.DEVICE)
-            amp_cond = torch.stack([c[1] for c in conds]).to(fo.DEVICE)
-            with torch.no_grad():
-                raw = amp_model(amp_cond).cpu()
-            amp_scales = torch.exp(raw[:, :3] * log_std_scale + log_std_mean)
-            if raw.shape[1] >= 6:
-                gains = (raw[:, 3:6] * gain_scale + gain_mean).clamp(0.1, 20.0)
-            else:
-                gains = torch.full_like(amp_scales, 1.0)
-            x = fo.sample_batch(unet, scheduler, diff_cond, data_shape,
-                                args.steps, training_type, seed=args.seed + start)
-            x = x * emb_std + emb_mean
-            if data_mode == "latent":
-                with torch.no_grad():
-                    specs = ae_model.decode(x)
-            else:
-                specs = x
-            specs = specs.clamp(min=0.0)[:, :3, :fo.FREQ_BINS, :].cpu().numpy()
-            gl_jobs = [
-                (specs[k, 0], float(gains[k, 0]), float(amp_scales[k, 0]),
-                 amp_metric, args.gl_iters, sta_name, code, "")
-                for k in range(len(batch))
-            ]
-            waves = list(pool.map(fo._process_synth, gl_jobs))
-            sa_jobs = [(w[0].astype(np.float64), sta_name, code, "", periods)
+            waves = sampler.generate([metas[di] for di, _ in batch], args.steps,
+                                     args.gl_iters, args.seed + start, pool)
+            sa_jobs = [(w.astype(np.float64), sta_name, code, "", periods)
                        for w in waves if w is not None]
             keep = [k for k, w in enumerate(waves) if w is not None]
             for k, out in zip(keep, pool.map(_sa_synth, sa_jobs)):

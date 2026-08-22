@@ -18,11 +18,10 @@ Adaptations vs the paper (documented, not corrected):
   - Magnitude sweep 1.5-5.0 and Vs30 sweep 350-650 m/s: the ranges the
     Marmara dataset actually covers (station Vs30 spans only ~400-605 m/s).
   - Period defaults to 0.3 s (in the 2-15 Hz waveform band).
-  - E component; the AmplitudeMLP variability caveat of
-    evaluate_distributions.py applies to the band width here too.
-  - Vs30 enters the pipeline twice (diffusion conditioning and AmplitudeMLP)
-    while station identity is held fixed, so panel b isolates the Vs30
-    *feature*; the station embedding may already encode site response.
+  - E component. The legacy AmplitudeMLP variability caveat of
+    evaluate_distributions.py applies only to per-event-normalized AEs.
+  - Vs30 enters diffusion conditioning; for legacy AEs it also enters the
+    AmplitudeMLP, while station identity is held fixed.
 
 Run from the project root:
     python eval/evaluate_scaling.py compute [--n_realizations 50]
@@ -156,7 +155,10 @@ def run_compute(args):
                       f"({rate:.1f} rec/s, ETA {eta:.0f} min)")
     print(f"[eval] real cache: {real_path.name}")
 
-    sweep_path = OUT_DIR / f"scal_sweep_{tag}_n{args.n_realizations}.npz"
+    from gwm_sampling import GwmSampler
+    sampler = GwmSampler(args.checkpoint, args.ae_checkpoint)
+    sweep_path = OUT_DIR / (f"scal_sweep_{tag}_model{sampler.cache_tag}"
+                            f"_n{args.n_realizations}.npz")
     if sweep_path.exists():
         print(f"[eval] sweep cache exists: {sweep_path.name}")
         return real_path, sweep_path
@@ -197,9 +199,6 @@ def run_compute(args):
     pairs = [(p, ri) for p in points for ri in range(args.n_realizations)]
 
     # ── GWM sweeps ───────────────────────────────────────────────────────────
-    from gwm_sampling import GwmSampler
-
-    sampler = GwmSampler(args.checkpoint, args.ae_checkpoint)
     sa_mag = np.full((len(mag_grid), args.n_realizations), np.nan)
     sa_vs30 = np.full((len(vs30_grid), args.n_realizations), np.nan)
     code = f"{channel_type}E"

@@ -1,13 +1,14 @@
 import os
 import glob
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, Iterable, List, Tuple, Optional
 import torch
 from torch.utils.data import Dataset
 import numpy as np
 from obspy import read
 from scipy import signal
 import pandas as pd
+from tqdm import tqdm
 
 
 # Fixed channel-type ordering so channel_idx is stable across runs/datasets.
@@ -38,6 +39,7 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
         target_time_bins: int = None,
         resample_hz: float = 100.0,
         target_seconds: float = 70.0,
+        global_normalization: bool = False,
     ):
         """
         Initialize the dataset.
@@ -53,6 +55,10 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
             log_scale: Whether to apply log scaling to the magnitude
             return_magnitude: If True, return magnitude; if False, return complex spectrogram
             magnitude_col: Which magnitude column to use from the event file
+            global_normalization: If True, normalize every magnitude spectrogram
+                using one log-domain min/max fitted on the training indices. Call
+                :meth:`fit_global_normalization` or
+                :meth:`set_global_normalization_stats` before reading samples.
         """
         self.data_dir = Path(data_dir)
         self.event_file = Path(event_file)
@@ -68,6 +74,9 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
         self.target_time_bins = int(target_time_bins) if target_time_bins else None
         self.resample_hz = float(resample_hz) if resample_hz else None
         self.target_seconds = float(target_seconds) if target_seconds else None
+        self.global_normalization = bool(global_normalization)
+        self.global_min: Optional[float] = None
+        self.global_max: Optional[float] = None
         self.target_samples = (
             int(round(self.resample_hz * self.target_seconds))
             if (self.resample_hz and self.target_seconds)
@@ -292,6 +301,147 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
         )
         return resized.squeeze(0)
 
+    @property
+    def global_normalization_stats(self) -> Optional[Dict[str, float]]:
+        """Return fitted global normalization statistics in config-friendly form."""
+        if self.global_min is None or self.global_max is None:
+            return None
+        return {"min": self.global_min, "max": self.global_max}
+
+    def set_global_normalization_stats(self, global_min: float, global_max: float) -> Tuple[float, float]:
+        """Set reusable log-domain global normalization bounds.
+
+        The values must be finite and satisfy ``global_max >= global_min``. A
+        zero range is valid and maps all values to zero during normalization.
+        """
+        global_min = float(global_min)
+        global_max = float(global_max)
+        if not np.isfinite(global_min) or not np.isfinite(global_max):
+            raise ValueError("Global normalization bounds must be finite.")
+        if global_max < global_min:
+            raise ValueError(
+                "Global normalization requires global_max >= global_min, "
+                f"got {global_max} < {global_min}."
+            )
+        self.global_min = global_min
+        self.global_max = global_max
+        return self.global_min, self.global_max
+
+    def _global_normalization_is_ready(self) -> bool:
+        """Whether global normalization has usable fitted bounds."""
+        return self.global_min is not None and self.global_max is not None
+
+    def _apply_global_normalization(self, spectrogram_tensor: torch.Tensor) -> torch.Tensor:
+        """Normalize a post-resize log-magnitude tensor without clipping."""
+        if not self._global_normalization_is_ready():
+            raise RuntimeError(
+                "Global normalization is enabled but statistics are not fitted. "
+                "Call fit_global_normalization(training_indices) or "
+                "set_global_normalization_stats(global_min, global_max) first."
+            )
+        assert self.global_min is not None and self.global_max is not None
+        value_range = self.global_max - self.global_min
+        if value_range == 0.0:
+            return torch.zeros_like(spectrogram_tensor)
+        return (spectrogram_tensor - self.global_min) / value_range
+
+    def _make_spectrogram_tensor(
+        self, file_path: Path, per_sample_normalize: bool
+    ) -> Tuple[torch.Tensor, object]:
+        """Load one file and build its log-domain, optionally resized STFT tensor.
+
+        ``per_sample_normalize`` is intentionally separate from ``self.normalize``
+        so fitting can inspect unnormalized, post-resize log magnitudes.
+        """
+        stream = read(str(file_path))
+        if len(stream) != 3:
+            raise ValueError(f"Expected 3 traces, got {len(stream)} in {file_path}")
+        stream.sort(keys=['channel'])
+
+        stft_channels = []
+        for trace in stream:
+            data = self._prep_trace_data(trace)
+            _, _, Zxx = signal.stft(
+                data,
+                fs=trace.stats.sampling_rate,
+                nperseg=self.nperseg,
+                noverlap=self.noverlap,
+                nfft=self.nfft,
+                return_onesided=True,
+                boundary='zeros',
+                padded=True,
+            )
+            if self.return_magnitude:
+                magnitude_spec = np.abs(Zxx)
+                if self.log_scale:
+                    magnitude_spec = np.log1p(magnitude_spec)
+                if per_sample_normalize:
+                    mag_min = magnitude_spec.min()
+                    mag_max = magnitude_spec.max()
+                    if mag_max > mag_min:
+                        magnitude_spec = (magnitude_spec - mag_min) / (mag_max - mag_min)
+                    else:
+                        magnitude_spec = np.zeros_like(magnitude_spec)
+                stft_channels.append(magnitude_spec)
+            else:
+                stft_channels.append(Zxx)
+
+        if self.return_magnitude:
+            spectrogram = np.stack(stft_channels, axis=0)
+        else:
+            real_parts = [np.real(component) for component in stft_channels]
+            imag_parts = [np.imag(component) for component in stft_channels]
+            spectrogram = np.stack(real_parts + imag_parts, axis=0)
+        return self._resize_spectrogram(torch.from_numpy(spectrogram).float()), stream
+
+    def fit_global_normalization(
+        self, indices: Iterable[int], show_progress: bool = True
+    ) -> Tuple[float, float]:
+        """Fit one scalar log-domain min/max over valid training samples only.
+
+        Each selected event's three components are transformed through log scaling
+        and final resizing before their values contribute. Files that fail to load
+        (or contain no finite values) are skipped. The fitted tuple can be saved
+        and later restored with :meth:`set_global_normalization_stats`.
+        """
+        if not self.return_magnitude:
+            raise ValueError("Global normalization is only supported for magnitude spectrograms.")
+        if not self.log_scale:
+            raise ValueError("Global normalization requires log_scale=True for log-domain bounds.")
+
+        selected_indices = [int(idx) for idx in indices]
+        fitted_min = np.inf
+        fitted_max = -np.inf
+        valid_samples = 0
+        with tqdm(
+            selected_indices,
+            total=len(selected_indices),
+            desc="Fitting global normalization",
+            unit="file",
+            dynamic_ncols=True,
+            disable=not show_progress,
+        ) as progress:
+            for idx in progress:
+                file_path = None
+                try:
+                    file_path = self.file_paths[int(idx)]
+                    spectrogram_tensor, _ = self._make_spectrogram_tensor(
+                        file_path, per_sample_normalize=False
+                    )
+                    finite_values = spectrogram_tensor[torch.isfinite(spectrogram_tensor)]
+                    if finite_values.numel() == 0:
+                        continue
+                    fitted_min = min(fitted_min, float(finite_values.min().item()))
+                    fitted_max = max(fitted_max, float(finite_values.max().item()))
+                    valid_samples += 1
+                except Exception as error:
+                    sample_label = str(file_path) if file_path is not None else f"index {idx!r}"
+                    tqdm.write(f"Skipping {sample_label} while fitting global normalization: {error}")
+
+        if valid_samples == 0:
+            raise RuntimeError("Could not fit global normalization: no valid selected samples were available.")
+        return self.set_global_normalization_stats(fitted_min, fitted_max)
+
     def __len__(self):
         return len(self.file_paths)
 
@@ -307,17 +457,24 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
             metadata: Dictionary containing additional information
         """
         file_path = self.file_paths[idx]
+        if self.global_normalization and not self.return_magnitude:
+            raise ValueError("Global normalization is only supported for magnitude spectrograms.")
+        if self.global_normalization and not self.log_scale:
+            raise ValueError("Global normalization requires log_scale=True for log-domain bounds.")
+        if self.global_normalization and not self._global_normalization_is_ready():
+            raise RuntimeError(
+                "Global normalization is enabled but statistics are not fitted. "
+                "Call fit_global_normalization(training_indices) or "
+                "set_global_normalization_stats(global_min, global_max) first."
+            )
         
         try:
-            # Read the mseed file
-            stream = read(str(file_path))
-            
-            # Ensure we have 3 components
-            if len(stream) != 3:
-                raise ValueError(f"Expected 3 traces, got {len(stream)} in {file_path}")
-            
-            # Sort traces by channel name to ensure consistent ordering (E, N, Z)
-            stream.sort(keys=['channel'])
+            spectrogram_tensor, stream = self._make_spectrogram_tensor(
+                file_path,
+                per_sample_normalize=self.normalize and not self.global_normalization,
+            )
+            if self.global_normalization:
+                spectrogram_tensor = self._apply_global_normalization(spectrogram_tensor)
             
             # Extract event ID and station name from filename
             event_id = self._extract_event_id_from_filename(file_path.name)
@@ -345,63 +502,6 @@ class SeismicSTFTDatasetWithMetadata(Dataset):
             # Get station index
             station_idx = self.station_to_idx.get(station_from_stream, 0)
             
-            # Initialize list to store STFT for each component
-            stft_channels = []
-            
-            for trace in stream:
-                # Get the waveform data (resampled + length-fixed for cross-channel alignment)
-                data = self._prep_trace_data(trace)
-
-                # Compute STFT
-                f, t, Zxx = signal.stft(
-                    data,
-                    fs=trace.stats.sampling_rate,
-                    nperseg=self.nperseg,
-                    noverlap=self.noverlap,
-                    nfft=self.nfft,
-                    return_onesided=True,
-                    boundary='zeros',
-                    padded=True
-                )
-                
-                # Get magnitude spectrogram
-                if self.return_magnitude:
-                    magnitude_spec = np.abs(Zxx)
-                    
-                    # Apply log scaling
-                    if self.log_scale:
-                        magnitude_spec = np.log1p(magnitude_spec)  # log(1 + x) to avoid log(0)
-                    
-                    # Normalize to [0, 1]
-                    if self.normalize:
-                        mag_min = magnitude_spec.min()
-                        mag_max = magnitude_spec.max()
-                        if mag_max > mag_min:
-                            magnitude_spec = (magnitude_spec - mag_min) / (mag_max - mag_min)
-                        else:
-                            magnitude_spec = np.zeros_like(magnitude_spec)
-                    
-                    stft_channels.append(magnitude_spec)
-                else:
-                    # Return complex spectrogram (real and imaginary parts)
-                    stft_channels.append(Zxx)
-            
-            # Stack the 3 components to create a 3-channel image
-            if self.return_magnitude:
-                spectrogram = np.stack(stft_channels, axis=0)  # Shape: (3, freq_bins, time_bins)
-            else:
-                # For complex spectrograms, stack real and imaginary parts
-                real_parts = [np.real(c) for c in stft_channels]
-                imag_parts = [np.imag(c) for c in stft_channels]
-                spectrogram = np.stack(real_parts + imag_parts, axis=0)  # Shape: (6, freq_bins, time_bins)
-            
-            # Convert to torch tensors
-            spectrogram_tensor = torch.from_numpy(spectrogram).float()
-
-            # Resize to a fixed (freq, time) so channel types with different
-            # sampling rates (and thus different native STFT shapes) align.
-            spectrogram_tensor = self._resize_spectrogram(spectrogram_tensor)
-
             magnitude_tensor = torch.tensor(event_info['magnitude'], dtype=torch.float32)
             location_tensor = torch.tensor([
                 event_info['latitude_norm'],

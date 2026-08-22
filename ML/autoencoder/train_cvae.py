@@ -3,6 +3,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 import json
+import re
 
 import torch
 import torch.nn as nn
@@ -14,6 +15,62 @@ from tqdm import tqdm
 
 from model import ConditionalVariationalAutoencoder
 from stft_dataset_with_metadata import SeismicSTFTDatasetWithMetadata, collate_fn_with_metadata
+from normalization_cache import fit_or_load_global_normalization
+
+
+def _named_run_directories(args):
+    """Return checkpoint/log directories, protecting explicitly named runs."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if args.name is None:
+        return timestamp, Path(args.checkpoint_dir) / timestamp, Path(args.log_dir) / timestamp
+
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.name):
+        raise ValueError(
+            "--name must be a single safe directory name beginning with an alphanumeric "
+            "character and containing only letters, numbers, '.', '_', or '-'."
+        )
+
+    checkpoint_dir = Path(args.checkpoint_dir) / args.name
+    log_dir = Path(args.log_dir) / args.name
+    if args.resume:
+        resume_path = Path(args.resume).expanduser().resolve()
+        try:
+            resume_path.relative_to(checkpoint_dir.resolve())
+        except ValueError as exc:
+            raise ValueError(
+                "When --name is used, --resume must point to a checkpoint inside "
+                f"{checkpoint_dir}."
+            ) from exc
+    elif any(path.exists() and any(path.iterdir()) for path in (checkpoint_dir, log_dir)):
+        raise FileExistsError(
+            f"Named run '{args.name}' already has files in {checkpoint_dir} or {log_dir}. "
+            "Choose a new --name or resume from a checkpoint in that named run."
+        )
+
+    return args.name, checkpoint_dir, log_dir
+
+
+def _fit_global_normalization(dataset, train_indices, cache_root=None):
+    """Fit or load training-split STFT bounds and return their scalar values."""
+    if cache_root is not None:
+        result = fit_or_load_global_normalization(dataset, train_indices, cache_root)
+        return result.global_min, result.global_max
+
+    stats = dataset.fit_global_normalization(train_indices)
+    if isinstance(stats, dict):
+        global_min = stats.get('global_min', stats.get('min'))
+        global_max = stats.get('global_max', stats.get('max'))
+    elif isinstance(stats, (tuple, list)) and len(stats) == 2:
+        global_min, global_max = stats
+    else:
+        global_min = getattr(dataset, 'global_min', None)
+        global_max = getattr(dataset, 'global_max', None)
+
+    if global_min is None or global_max is None:
+        raise RuntimeError(
+            "Dataset did not provide global normalization bounds after fitting."
+        )
+    return float(global_min), float(global_max)
 
 
 class CVAETrainer:
@@ -356,6 +413,9 @@ class CVAETrainer:
             'train_losses': self.train_losses,
             'val_losses': self.val_losses,
             'best_val_loss': self.best_val_loss,
+            'normalization_mode': self.config['normalization_mode'],
+            'global_min': self.config['global_min'],
+            'global_max': self.config['global_max'],
             'config': self.config,
         }
         
@@ -500,6 +560,9 @@ def parse_args():
                         help='Number of points to overlap between segments')
     parser.add_argument('--nfft', type=int, default=256,
                         help='Length of the FFT used')
+    parser.add_argument('--global_normalization', action='store_true',
+                        help='Normalize all log-scaled spectrograms with min/max fitted on the training split. '
+                             'Default is per-event normalization.')
     
     # Model arguments
     parser.add_argument('--latent_dim', type=int, default=256,
@@ -534,6 +597,8 @@ def parse_args():
                         help='Directory to save checkpoints')
     parser.add_argument('--log_dir', type=str, default='logs_cvae',
                         help='Directory for tensorboard logs')
+    parser.add_argument('--name', type=str, default=None,
+                        help='Optional safe run name. Named checkpoints and logs are stored under this subdirectory.')
     parser.add_argument('--save_interval', type=int, default=5,
                         help='Save checkpoint every N epochs')
     parser.add_argument('--resume', type=str, default=None,
@@ -552,6 +617,7 @@ def parse_args():
 def main():
     """Main training function."""
     args = parse_args()
+    run_name, checkpoint_dir, log_dir = _named_run_directories(args)
     
     # Set random seed
     torch.manual_seed(args.seed)
@@ -576,6 +642,7 @@ def main():
         nfft=args.nfft,
         normalize=True,
         log_scale=True,
+        global_normalization=args.global_normalization,
         magnitude_col=args.magnitude_col,
     )
     
@@ -596,6 +663,19 @@ def main():
     print(f"Train size: {len(train_dataset)}")
     print(f"Val size: {len(val_dataset)}")
     print(f"Test size: {len(test_dataset)}")
+
+    global_min = None
+    global_max = None
+    if args.global_normalization:
+        global_min, global_max = _fit_global_normalization(
+            dataset,
+            train_dataset.indices,
+            cache_root=Path(args.checkpoint_dir) / ".normalization_cache",
+        )
+        print(
+            "Using global normalization fitted on training samples only "
+            f"(min={global_min:.6g}, max={global_max:.6g})."
+        )
     
     # Create data loaders
     train_loader = DataLoader(
@@ -648,12 +728,12 @@ def main():
     )
     
     # Create trainer
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    checkpoint_dir = Path(args.checkpoint_dir) / timestamp
-    log_dir = Path(args.log_dir) / timestamp
-    
     config = vars(args)
-    config['timestamp'] = timestamp
+    config['run_name'] = run_name
+    config['timestamp'] = run_name if args.name is None else None
+    config['normalization_mode'] = 'global' if args.global_normalization else 'per_event'
+    config['global_min'] = global_min
+    config['global_max'] = global_max
     config['num_params'] = num_params
     config['num_stations'] = num_stations
     

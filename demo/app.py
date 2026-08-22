@@ -40,6 +40,7 @@ from ML.diffusion.model import (
 )
 from ML.autoencoder.inference import load_model as _load_ae
 from ML.amplitude.model import AmplitudeMLP
+from ML.diffusion.reconstruction import decoded_to_magnitude, resolve_reconstruction_spec
 from diffusers import DDPMScheduler
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -143,6 +144,56 @@ def _get_embeddings_source_checkpoint():
     return ckpt_path if ckpt_path.exists() else None
 
 
+def _checkpoint_path(value):
+    """Resolve an AE checkpoint recorded in a diffusion provenance snapshot."""
+    if not value:
+        return None
+    path = Path(value)
+    if not path.is_absolute():
+        path = (DIFF / path).resolve()
+    return path if path.exists() else None
+
+
+def _provenance_candidates(training_config: dict):
+    """Return provenance mappings, checkpoint-bound metadata first.
+
+    ``embedding_provenance`` is the current training format.  The other names
+    keep the demo compatible with checkpoints produced while the provenance
+    format was being introduced.
+    """
+    candidates = []
+    for key in ("embedding_provenance", "embeddings_source", "source", "ae_normalization"):
+        value = training_config.get(key)
+        if isinstance(value, dict):
+            candidates.append(value)
+    candidates.append(training_config)
+    return candidates
+
+
+def _resolve_diffusion_normalization(training_config: dict) -> dict:
+    """Resolve checkpoint-bound reconstruction metadata through the shared contract."""
+    spec = resolve_reconstruction_spec(
+        training_config,
+        embeddings_source_path=DIFF / "embeddings" / "source.json",
+    )
+    return {
+        "mode": spec.mode,
+        "global_min": spec.global_min,
+        "global_max": spec.global_max,
+        "source": spec.source_origin,
+        "spec": spec,
+    }
+
+
+def _get_checkpoint_bound_ae_checkpoint(training_config: dict):
+    """Return the AE checkpoint recorded with this diffusion checkpoint, if any."""
+    for source in _provenance_candidates(training_config):
+        path = _checkpoint_path(source.get("ae_checkpoint"))
+        if path is not None:
+            return path
+    return None
+
+
 def _find_latest_timestamped_ae_checkpoint():
     """
     Return latest AE best_model.pt from timestamped dirs only (YYYYMMDD_HHMMSS),
@@ -219,6 +270,67 @@ def _make_normalise_cond(scale: dict):
         out[:k] = (out[:k] - mean[:k]) / std[:k]
         return out
     return normalise
+
+
+def _checkpoint_scale(training_config: dict, legacy_scale: dict) -> dict:
+    """Resolve diffusion scaling/split metadata, preferring the checkpoint.
+
+    Schema-v2 checkpoints carry both a complete ``embedding_scale`` snapshot
+    and the important normalization/split fields directly.  ``legacy_scale``
+    is only used for checkpoints created before those fields were persisted.
+    """
+    resolved = dict(legacy_scale)
+    snapshot = training_config.get("embedding_scale")
+    if isinstance(snapshot, dict):
+        resolved.update(snapshot)
+
+    data_norm = training_config.get("data_normalization")
+    if isinstance(data_norm, dict):
+        resolved["emb_mean"] = data_norm.get("mean", resolved.get("emb_mean", 0.0))
+        resolved["emb_std"] = data_norm.get("std", resolved.get("emb_std", 1.0))
+
+    cond_norm = training_config.get("conditioning_normalization")
+    if isinstance(cond_norm, dict):
+        resolved["cond_mean"] = cond_norm.get("mean", resolved.get("cond_mean", []))
+        resolved["cond_std"] = cond_norm.get("std", resolved.get("cond_std", []))
+
+    split = training_config.get("split")
+    if isinstance(split, dict):
+        for key in ("train_indices", "val_indices", "held_out_indices", "held_out_station_ids"):
+            if key in split:
+                resolved[key] = split[key]
+    return resolved
+
+
+def _checkpoint_station_mapping(training_config: dict) -> dict[str, int]:
+    """Return the saved station mapping and validate channel indices."""
+    mappings = training_config.get("mappings")
+    if not isinstance(mappings, dict):
+        return {name: i for i, name in enumerate(STATION_NAMES)}
+
+    saved_stations = mappings.get("station_index_to_name")
+    saved_channels = mappings.get("channel_index_to_type")
+    if not isinstance(saved_stations, dict) or not isinstance(saved_channels, dict):
+        raise ValueError("Diffusion checkpoint has invalid station/channel mappings.")
+
+    expected_channels = {str(i): name for i, name in enumerate(CHANNEL_NAMES)}
+    if {str(k): str(v) for k, v in saved_channels.items()} != expected_channels:
+        raise ValueError(
+            "Diffusion checkpoint channel mapping differs from the demo: "
+            f"checkpoint={saved_channels}, expected={expected_channels}."
+        )
+
+    station_mapping: dict[str, int] = {}
+    for index, name in saved_stations.items():
+        try:
+            station_idx = int(index)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid station index in checkpoint mapping: {index!r}.") from exc
+        station_name = str(name)
+        if station_name in station_mapping:
+            raise ValueError(f"Duplicate station name in checkpoint mapping: {station_name!r}.")
+        station_mapping[station_name] = station_idx
+    return station_mapping
 
 def _load_diffusion_scheduler(diff_ckpt: Path) -> DDPMScheduler:
     """
@@ -450,6 +562,8 @@ def griffin_lim_channel(magnitude: np.ndarray, n_iter: int = GRIFFIN_LIM_ITERS, 
     ----------
     magnitude : (freq_bins, time_bins) float32
         Normalised log-magnitude spectrogram (the raw VAE decoder output).
+        With global AE normalization, ``params`` must carry its saved global
+        bounds so the physical log magnitude is restored before ``expm1``.
     """
     cfg = {
         "n_iter": n_iter,
@@ -462,6 +576,10 @@ def griffin_lim_channel(magnitude: np.ndarray, n_iter: int = GRIFFIN_LIM_ITERS, 
         "random_state": GRIFFIN_LIM_RANDOM_STATE,
         "length": None,
         "inv_log_gain": 1.0,
+        "normalization_mode": "per_event",
+        "global_min": None,
+        "global_max": None,
+        "reconstruction_spec": None,
         "noise_gate": False,
         "noise_gate_threshold": 0.05,
     }
@@ -476,20 +594,54 @@ def griffin_lim_channel(magnitude: np.ndarray, n_iter: int = GRIFFIN_LIM_ITERS, 
     cfg["center"] = bool(cfg["center"])
     cfg["momentum"] = float(np.clip(float(cfg["momentum"]), 0.0, 0.999))
     cfg["inv_log_gain"] = float(np.clip(float(cfg["inv_log_gain"]), 0.1, 20.0))
+    cfg["normalization_mode"] = str(cfg.get("normalization_mode", "per_event")).lower()
+    if cfg["normalization_mode"] not in {"per_event", "global"}:
+        raise ValueError(f"Unknown normalization mode: {cfg['normalization_mode']!r}")
     cfg["noise_gate"] = bool(cfg["noise_gate"])
     cfg["noise_gate_threshold"] = float(np.clip(float(cfg["noise_gate_threshold"]), 0.0, 1.0))
     if cfg.get("random_state", None) is not None:
         cfg["random_state"] = int(cfg["random_state"])
 
-    # Invert the per-sample log1p normalization that SeismicSTFTDataset applies.
-    # Exact per-sample min/max are unavailable at inference, so expose a scalar
-    # gain in log-domain before expm1 as a practical calibration knob.
-    mag = np.clip(magnitude, 0.0, None).astype(np.float64)
-    if cfg["noise_gate"]:
-        # Soft-threshold in the log domain: the model's residual noise floor in
-        # quiet bins would otherwise be amplified by expm1 into broadband noise.
-        mag = np.clip(mag - cfg["noise_gate_threshold"], 0.0, None)
-    mag = np.expm1(mag * cfg["inv_log_gain"])
+    # Invert the AE's preprocessing.  Per-event normalization has no exact
+    # inverse at inference, hence its legacy learned/manual log gain.  Global
+    # normalization has an exact saved inverse and must never be upper-clamped:
+    # decoded values > 1 can represent legitimately strong motion.
+    mag = np.asarray(magnitude, dtype=np.float64)
+    if cfg["normalization_mode"] == "global":
+        try:
+            global_min = float(cfg["global_min"])
+            global_max = float(cfg["global_max"])
+        except (TypeError, ValueError, KeyError) as exc:
+            raise ValueError("Global normalization requires global_min and global_max.") from exc
+        if not np.isfinite(global_min) or not np.isfinite(global_max) or global_max <= global_min:
+            raise ValueError("Invalid global normalization bounds.")
+        if cfg["noise_gate"]:
+            # Gate after restoring physical log magnitude but before expm1.
+            # This is intentionally not the exact inverse: noise gating is an
+            # optional reconstruction adjustment, while the no-gate path below
+            # uses the shared exact inverse unchanged.
+            log_mag = mag * (global_max - global_min) + global_min
+            mag = np.expm1(np.maximum(log_mag - cfg["noise_gate_threshold"], 0.0))
+        else:
+            reconstruction_spec = cfg.get("reconstruction_spec")
+            if reconstruction_spec is not None:
+                # Shared helper is also used by evaluation scripts, keeping the
+                # exact global inverse identical everywhere.
+                mag = decoded_to_magnitude(mag, reconstruction_spec)
+            else:
+                mag = np.expm1(np.maximum(mag * (global_max - global_min) + global_min, 0.0))
+    else:
+        mag = np.clip(mag, 0.0, None)
+        if cfg["noise_gate"]:
+            # Soft-threshold in the log domain: the model's residual noise floor
+            # in quiet bins would otherwise be amplified by expm1.
+            mag = np.clip(mag - cfg["noise_gate_threshold"], 0.0, None)
+        # The shared helper retains the legacy manual/learned gain contract.
+        reconstruction_spec = cfg.get("reconstruction_spec")
+        if reconstruction_spec is not None:
+            mag = decoded_to_magnitude(mag, reconstruction_spec, legacy_inv_log_gain=cfg["inv_log_gain"])
+        else:
+            mag = np.expm1(mag * cfg["inv_log_gain"])
     # Make Griffin-Lim robust to custom STFT freq-bin counts from stft-mode training.
     expected_n_fft = max(2, int((mag.shape[0] - 1) * 2))
     if cfg["n_fft"] != expected_n_fft:
@@ -684,7 +836,11 @@ class SeismicDemoApp(tk.Tk):
         self._emb_mean      = 0.0
         self._data_mode     = "latent"
         self._training_type = "ddpm"
+        self._normalization = {"mode": "per_event", "global_min": None, "global_max": None,
+                               "source": "legacy default"}
         self._normalise_cond = lambda v, limit=None: v
+        self._station_name_to_idx = {name: i for i, name in enumerate(STATION_NAMES)}
+        self._station_names = list(STATION_NAMES)
         self._station_locations = {}
         self._station_vs30      = {}   # per-station Vs30 (m/s); only used by Vs30 checkpoints
         self._train_metadatas   = []
@@ -923,9 +1079,13 @@ class SeismicDemoApp(tk.Tk):
                     textvariable=self._gl_vars["momentum"]).grid(row=row, column=1, sticky="ew", pady=2)
         row += 1
 
-        ttk.Label(gl_frame, text="Inv-Log Gain").grid(row=row, column=0, sticky="w", padx=(0, 6), pady=2)
-        ttk.Spinbox(gl_frame, from_=0.1, to=20.0, increment=0.1, width=10,
-                    textvariable=self._gl_vars["inv_log_gain"]).grid(row=row, column=1, sticky="ew", pady=2)
+        self._inv_log_gain_label = ttk.Label(gl_frame, text="Inv-Log Gain")
+        self._inv_log_gain_label.grid(row=row, column=0, sticky="w", padx=(0, 6), pady=2)
+        self._inv_log_gain_spinbox = ttk.Spinbox(
+            gl_frame, from_=0.1, to=20.0, increment=0.1, width=10,
+            textvariable=self._gl_vars["inv_log_gain"],
+        )
+        self._inv_log_gain_spinbox.grid(row=row, column=1, sticky="ew", pady=2)
         row += 1
 
         ttk.Checkbutton(gl_frame, text="Noise Gate", variable=self._gl_vars["noise_gate"]).grid(
@@ -935,11 +1095,12 @@ class SeismicDemoApp(tk.Tk):
                     textvariable=self._gl_vars["noise_gate_threshold"]).grid(row=row, column=1, sticky="ew", pady=2)
         row += 1
 
-        ttk.Checkbutton(
+        self._predicted_gain_checkbutton = ttk.Checkbutton(
             gl_frame,
             text="Predicted Gain (Amp MLP)",
             variable=self._gl_vars["use_predicted_gain"],
-        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
+        )
+        self._predicted_gain_checkbutton.grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
         row += 1
 
         ttk.Label(gl_frame, text="Hop Length").grid(row=row, column=0, sticky="w", padx=(0, 6), pady=2)
@@ -1018,13 +1179,26 @@ class SeismicDemoApp(tk.Tk):
         self._gl_vars["n_fft"].set(NFFT)
         self._gl_vars["window"].set(GRIFFIN_LIM_WINDOW)
 
+    def _sync_normalization_controls(self):
+        """Disable legacy amplitude knobs when the AE has an exact global inverse."""
+        if not hasattr(self, "_gl_vars"):
+            return
+        global_mode = self._normalization.get("mode") == "global"
+        state = "disabled" if global_mode else "normal"
+        self._inv_log_gain_spinbox.configure(state=state)
+        self._predicted_gain_checkbutton.configure(state=state)
+        if global_mode:
+            self._gl_vars["inv_log_gain"].set(1.0)
+            self._gl_vars["use_predicted_gain"].set(False)
+
     def _get_griffin_lim_params_from_ui(self) -> dict:
         if not hasattr(self, "_gl_vars"):
             return {}
 
         n_iter = max(1, int(self._gl_vars["n_iter"].get()))
         momentum = float(np.clip(float(self._gl_vars["momentum"].get()), 0.0, 0.999))
-        inv_log_gain = float(np.clip(float(self._gl_vars["inv_log_gain"].get()), 0.1, 20.0))
+        global_mode = self._normalization.get("mode") == "global"
+        inv_log_gain = 1.0 if global_mode else float(np.clip(float(self._gl_vars["inv_log_gain"].get()), 0.1, 20.0))
         noise_gate = bool(self._gl_vars["noise_gate"].get())
         noise_gate_threshold = float(np.clip(float(self._gl_vars["noise_gate_threshold"].get()), 0.0, 1.0))
         hop_length = max(1, int(self._gl_vars["hop_length"].get()))
@@ -1050,7 +1224,11 @@ class SeismicDemoApp(tk.Tk):
             "inv_log_gain": inv_log_gain,
             "noise_gate": noise_gate,
             "noise_gate_threshold": noise_gate_threshold,
-            "use_predicted_gain": bool(self._gl_vars["use_predicted_gain"].get()),
+            "use_predicted_gain": False if global_mode else bool(self._gl_vars["use_predicted_gain"].get()),
+            "normalization_mode": self._normalization["mode"],
+            "global_min": self._normalization["global_min"],
+            "global_max": self._normalization["global_max"],
+            "reconstruction_spec": self._normalization.get("spec"),
             "hop_length": hop_length,
             "win_length": win_length,
             "n_fft": n_fft,
@@ -1071,7 +1249,9 @@ class SeismicDemoApp(tk.Tk):
             return
 
         # Reuse the per-channel gains predicted for the last generated sample.
-        if params.get("use_predicted_gain", True) and self._latest_pred_gains is not None:
+        if (self._normalization.get("mode") != "global"
+                and params.get("use_predicted_gain", True)
+                and self._latest_pred_gains is not None):
             params["inv_log_gain_per_ch"] = [float(g) for g in self._latest_pred_gains]
 
         spec = np.array(self._latest_spec, copy=True)
@@ -1091,7 +1271,8 @@ class SeismicDemoApp(tk.Tk):
             )
             # Re-apply the amplitude scaling from the last generate so Update
             # Waveform stays in the same physical units as the generated plot.
-            if self._latest_amp_scales is not None and self._amp_stats is not None:
+            if (self._normalization.get("mode") != "global"
+                    and self._latest_amp_scales is not None and self._amp_stats is not None):
                 metric = self._amp_stats.get("metric", "std")
                 for ch in range(3):
                     ref = (
@@ -1234,34 +1415,10 @@ class SeismicDemoApp(tk.Tk):
             else:
                 print("[demo] No station_vs30.json; Vs30-conditioned checkpoints unavailable")
 
-            # Held-out split recorded by ML/diffusion/train.py. These index into the
-            # same metadata.json the diffusion model was trained on, so they are the
-            # samples the model never saw during training ("test" set).
-            self._val_indices = [int(i) for i in scale.get("val_indices", [])]
-            if self._val_indices:
-                print(f"[demo] Loaded {len(self._val_indices):,} held-out (test) indices")
-            else:
-                print("[demo] No val_indices in scale.json; 'Random EQ (Test)' will be disabled")
-
             meta_path = DIFF / "embeddings" / "metadata.json"
             if meta_path.exists():
                 self._train_metadatas = json.load(open(meta_path))
                 print(f"[demo] Loaded {len(self._train_metadatas):,} training metadata entries")
-
-            available_stations = [s for s in STATION_NAMES if s in self._station_locations]
-            missing_stations = [s for s in STATION_NAMES if s not in self._station_locations]
-            if missing_stations:
-                print(
-                    "[demo] Warning: station locations missing for: "
-                    + ", ".join(missing_stations)
-                )
-            if available_stations:
-                def _update_station_choices():
-                    self._station_cb.configure(values=available_stations)
-                    if self._station_var.get() not in available_stations:
-                        self._station_var.set(available_stations[0])
-                    self._update_station_map()
-                self.after(0, _update_station_choices)
 
             # ── Diffusion model (latest checkpoint) ──────────────────────────
             diff_ckpt, diff_cfg = _find_latest_diffusion_checkpoint()
@@ -1283,18 +1440,59 @@ class SeismicDemoApp(tk.Tk):
             self._scheduler = _load_diffusion_scheduler(diff_ckpt)
 
             train_cfg = _read_diffusion_training_config(diff_ckpt)
-            self._data_mode     = str(train_cfg.get("data_mode",     self._data_mode)).lower()
+            self._station_name_to_idx = _checkpoint_station_mapping(train_cfg)
+            self._station_names = [
+                name for name, _ in sorted(
+                    self._station_name_to_idx.items(), key=lambda item: item[1]
+                )
+            ]
+            available_stations = [s for s in self._station_names if s in self._station_locations]
+            missing_stations = [s for s in self._station_names if s not in self._station_locations]
+            if missing_stations:
+                print(
+                    "[demo] Warning: station locations missing for: "
+                    + ", ".join(missing_stations)
+                )
+            if available_stations:
+                def _update_station_choices():
+                    self._station_cb.configure(values=available_stations)
+                    if self._station_var.get() not in available_stations:
+                        self._station_var.set(available_stations[0])
+                    self._update_station_map()
+                self.after(0, _update_station_choices)
+
+            scale = _checkpoint_scale(train_cfg, scale)
+            self._emb_std = float(scale.get("emb_std", 1.0))
+            self._emb_mean = float(scale.get("emb_mean", 0.0))
+            self._normalise_cond = _make_normalise_cond(scale)
+            self._val_indices = [int(i) for i in scale.get("val_indices", [])]
+            if self._val_indices:
+                print(f"[demo] Loaded {len(self._val_indices):,} checkpoint validation indices")
+            else:
+                print("[demo] Checkpoint has no validation indices; 'Random EQ (Test)' is disabled")
+
+            self._data_mode     = str(train_cfg.get("data_mode", self._data_mode)).lower()
             self._training_type = str(train_cfg.get("training_type", self._training_type)).lower()
+            self._normalization = _resolve_diffusion_normalization(train_cfg)
             if self._data_mode not in {"latent", "stft"}:
                 self._data_mode = "latent"
             if self._training_type not in {"ddpm", "flow_matching"}:
                 self._training_type = "ddpm"
             _display = "Flow Matching" if self._training_type == "flow_matching" else "DDPM"
             self.after(0, lambda d=_display: self._model_type_var.set(d))
+            self.after(0, self._sync_normalization_controls)
+            print(
+                "[demo] AE normalization="
+                f"{self._normalization['mode']} ({self._normalization['source']})"
+            )
 
             # ── Data-mode specific setup ──────────────────────────────────────
             if self._data_mode == "latent":
-                ae_ckpt = _get_embeddings_source_checkpoint() or _find_latest_timestamped_ae_checkpoint()
+                ae_ckpt = (
+                    _get_checkpoint_bound_ae_checkpoint(train_cfg)
+                    or _get_embeddings_source_checkpoint()
+                    or _find_latest_timestamped_ae_checkpoint()
+                )
                 if ae_ckpt is None:
                     raise FileNotFoundError(
                         "No autoencoder checkpoint found.\n"
@@ -1367,7 +1565,11 @@ class SeismicDemoApp(tk.Tk):
                 f"sample_shape={self._emb_shape}, emb_mean={self._emb_mean:.5f}, emb_std={self._emb_std:.5f}"
             )
 
-            self._amp_model, self._amp_stats = _load_amplitude_model(device=DEVICE)
+            if self._normalization["mode"] == "global":
+                self._amp_model, self._amp_stats = None, None
+                print("[demo] Global AE normalization: amplitude MLP is bypassed.")
+            else:
+                self._amp_model, self._amp_stats = _load_amplitude_model(device=DEVICE)
 
             print(f"[demo] Loaded diffusion checkpoint: {self._rel_to_root(self._diff_ckpt_path)}")
             if self._ae_ckpt_path is not None:
@@ -1467,11 +1669,18 @@ class SeismicDemoApp(tk.Tk):
                 padded=True,
             )
             mag = np.log1p(np.abs(zxx))
-            mag_min, mag_max = mag.min(), mag.max()
-            if mag_max > mag_min:
-                mag = (mag - mag_min) / (mag_max - mag_min)
+            if self._normalization.get("mode") == "global":
+                global_min = float(self._normalization["global_min"])
+                global_max = float(self._normalization["global_max"])
+                # Match the AE input exactly. Do not clip values above 1: global
+                # normalization intentionally preserves unusually strong events.
+                mag = (mag - global_min) / (global_max - global_min)
             else:
-                mag = np.zeros_like(mag)
+                mag_min, mag_max = mag.min(), mag.max()
+                if mag_max > mag_min:
+                    mag = (mag - mag_min) / (mag_max - mag_min)
+                else:
+                    mag = np.zeros_like(mag)
             stft_channels.append(mag)
 
         spec  = np.stack(stft_channels, axis=0)   # (3, F, T)
@@ -1522,7 +1731,7 @@ class SeismicDemoApp(tk.Tk):
         if "snr" in m and "snr" in self._svars:
             self._svars["snr"].set(float(m["snr"]))
         station = m.get("station_name", "")
-        if station in STATION_NAMES and station in self._station_locations:
+        if station in self._station_name_to_idx and station in self._station_locations:
             self._station_var.set(station)
         channel = m.get("channel_type", "")
         if channel in CHANNEL_NAMES:
@@ -1629,6 +1838,27 @@ class SeismicDemoApp(tk.Tk):
             self._scheduler = _load_diffusion_scheduler(diff_ckpt)
 
             train_cfg = _read_diffusion_training_config(diff_ckpt)
+            scale = _checkpoint_scale(train_cfg, _load_scale())
+            self._emb_std = float(scale.get("emb_std", 1.0))
+            self._emb_mean = float(scale.get("emb_mean", 0.0))
+            self._normalise_cond = _make_normalise_cond(scale)
+            self._val_indices = [int(i) for i in scale.get("val_indices", [])]
+            self._station_name_to_idx = _checkpoint_station_mapping(train_cfg)
+            self._station_names = [
+                name for name, _ in sorted(
+                    self._station_name_to_idx.items(), key=lambda item: item[1]
+                )
+            ]
+            available_stations = [s for s in self._station_names if s in self._station_locations]
+            if available_stations:
+                def _update_station_choices():
+                    self._station_cb.configure(values=available_stations)
+                    if self._station_var.get() not in available_stations:
+                        self._station_var.set(available_stations[0])
+                    self._update_station_map()
+                self.after(0, _update_station_choices)
+
+            self._normalization = _resolve_diffusion_normalization(train_cfg)
             new_training_type = str(train_cfg.get("training_type", self._training_type)).lower()
             if new_training_type not in {"ddpm", "flow_matching"}:
                 new_training_type = self._training_type
@@ -1640,23 +1870,38 @@ class SeismicDemoApp(tk.Tk):
             if "data_shape" in train_cfg:
                 self._emb_shape = tuple(int(v) for v in train_cfg["data_shape"])
 
-            # Load AE if the new checkpoint needs latent decoding and we don't have one
-            if new_data_mode == "latent" and self._ae_model is None:
-                ae_ckpt = _get_embeddings_source_checkpoint() or _find_latest_timestamped_ae_checkpoint()
+            # Reload the AE when checkpoint provenance selects a different one;
+            # using the current mutable embeddings/source.json would otherwise
+            # make a historical diffusion checkpoint decode with the wrong AE.
+            if new_data_mode == "latent":
+                ae_ckpt = (
+                    _get_checkpoint_bound_ae_checkpoint(train_cfg)
+                    or _get_embeddings_source_checkpoint()
+                    or _find_latest_timestamped_ae_checkpoint()
+                )
                 if ae_ckpt is None:
                     raise FileNotFoundError(
                         "No autoencoder checkpoint found.\n"
                         "Train it first with ML/autoencoder/train.py"
                     )
-                self._ae_ckpt_path = ae_ckpt
-                self._set_status(f"Loading AE ({ae_ckpt.parent.name})…", YELLOW)
-                self._ae_model, _ = _load_ae(str(ae_ckpt), device=DEVICE)
-                self._ae_model.eval()
+                if self._ae_model is None or self._ae_ckpt_path != ae_ckpt:
+                    self._ae_ckpt_path = ae_ckpt
+                    self._set_status(f"Loading AE ({ae_ckpt.parent.name})…", YELLOW)
+                    self._ae_model, ae_config = _load_ae(str(ae_ckpt), device=DEVICE)
+                    self._ae_model.eval()
+                    _apply_ae_stft_config(ae_config)
+                    self.after(0, self._sync_griffin_lim_defaults_from_stft)
             elif new_data_mode == "stft":
                 self._ae_model = None
                 self._ae_ckpt_path = None
 
             self._data_mode = new_data_mode
+            if self._normalization["mode"] == "global":
+                self._amp_model, self._amp_stats = None, None
+                print("[demo] Global AE normalization: amplitude MLP is bypassed.")
+            else:
+                self._amp_model, self._amp_stats = _load_amplitude_model(device=DEVICE)
+            self.after(0, self._sync_normalization_controls)
             print(f"[demo] Switched to {self._training_type} model: {diff_ckpt.name}")
             self._set_model_info(self._diff_ckpt_path, self._ae_ckpt_path)
 
@@ -1687,7 +1932,7 @@ class SeismicDemoApp(tk.Tk):
                 RED,
             )
             return
-        station_idx  = STATION_NAMES.index(station_name)
+        station_idx = self._station_name_to_idx[station_name]
         channel_name = self._channel_var.get()
         self._cond_meta_at_generate = {
             "magnitude":   self._svars["mag"].get(),
@@ -1761,9 +2006,13 @@ class SeismicDemoApp(tk.Tk):
             suptitle = self._title_at_generate
             gl_params = dict(self._gl_params_at_generate) if self._gl_params_at_generate is not None else {}
 
-            # Predict scales before sampling: the inv-log gains must reach the
-            # Griffin-Lim inversion, which runs inside the sampling pipeline.
-            amp_scales, pred_gains = self._predict_amplitude_and_gain(cond_meta)
+            # Per-event AEs cannot reconstruct physical amplitude exactly, so
+            # legacy runs retain their amplitude MLP. Global-normalized AEs have
+            # an exact magnitude inverse and deliberately do not call it.
+            if self._normalization.get("mode") == "global":
+                amp_scales, pred_gains = None, None
+            else:
+                amp_scales, pred_gains = self._predict_amplitude_and_gain(cond_meta)
             self._latest_pred_gains = pred_gains
             self._latest_amp_scales = amp_scales
             if pred_gains is not None and gl_params.get("use_predicted_gain", True):
@@ -1795,7 +2044,7 @@ class SeismicDemoApp(tk.Tk):
                 training_type=self._training_type,
             )
 
-            if amp_scales is not None:
+            if self._normalization.get("mode") != "global" and amp_scales is not None:
                 # Normalize by the same statistic the checkpoint predicts
                 # (metric=max: peak amplitude; metric=std: standard deviation).
                 metric = self._amp_stats.get("metric", "std")
@@ -1876,7 +2125,7 @@ class SeismicDemoApp(tk.Tk):
         eq_lon = self._svars["lon"].get() if hasattr(self, "_svars") else None
 
         station_pts = []
-        for name in STATION_NAMES:
+        for name in self._station_names:
             meta = self._station_locations.get(name)
             if not meta:
                 continue
