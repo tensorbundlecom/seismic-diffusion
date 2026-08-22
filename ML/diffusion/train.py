@@ -3,9 +3,10 @@ import torch
 import json
 import shutil
 import argparse
+import hashlib
 import math
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import numpy as np
 from torch.utils.data import TensorDataset, DataLoader, Dataset, Subset
@@ -15,6 +16,112 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils import generate, decode_embedding
 import wandb
+
+
+EMBEDDINGS_DIR = Path("embeddings")
+SOURCE_PATH = EMBEDDINGS_DIR / "source.json"
+METADATA_PATH = EMBEDDINGS_DIR / "metadata.json"
+EMBEDDINGS_PATH = EMBEDDINGS_DIR / "embeddings.pt"
+
+
+def _read_json(path: Path) -> Any:
+    """Read a JSON artifact with a useful error message for training inputs."""
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Missing required training artifact: {path}") from None
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in training artifact {path}: {exc}") from exc
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _validate_embedding_source(source: Any) -> Dict[str, Any]:
+    """Validate the export contract needed to train safely from latent embeddings."""
+    if not isinstance(source, dict):
+        raise ValueError(f"{SOURCE_PATH} must contain a JSON object.")
+
+    required = ("ae_checkpoint", "stft", "normalization_mode", "num_embeddings", "embedding_shape")
+    missing = [key for key in required if key not in source]
+    if missing:
+        raise ValueError(f"{SOURCE_PATH} is missing required fields: {', '.join(missing)}.")
+    if not isinstance(source["stft"], dict):
+        raise ValueError(f"{SOURCE_PATH}: 'stft' must be an object.")
+    if not isinstance(source["ae_checkpoint"], str) or not source["ae_checkpoint"].strip():
+        raise ValueError(f"{SOURCE_PATH}: 'ae_checkpoint' must be a non-empty string.")
+
+    mode = str(source["normalization_mode"]).strip().lower()
+    if mode not in {"global", "per_event"}:
+        raise ValueError(
+            f"{SOURCE_PATH}: unsupported normalization_mode={source['normalization_mode']!r}."
+        )
+    if mode == "global":
+        try:
+            global_min = float(source["global_min"])
+            global_max = float(source["global_max"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{SOURCE_PATH}: global normalization requires numeric global_min/global_max."
+            ) from exc
+        if not math.isfinite(global_min) or not math.isfinite(global_max) or global_max < global_min:
+            raise ValueError(
+                f"{SOURCE_PATH}: invalid global normalization bounds "
+                f"({global_min}, {global_max})."
+            )
+
+    try:
+        count = int(source["num_embeddings"])
+        shape = [int(dim) for dim in source["embedding_shape"]]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{SOURCE_PATH}: invalid num_embeddings or embedding_shape.") from exc
+    if count <= 0 or len(shape) != 3 or any(dim <= 0 for dim in shape):
+        raise ValueError(
+            f"{SOURCE_PATH}: expected positive num_embeddings and a 3D positive embedding_shape; "
+            f"got count={count}, shape={shape}."
+        )
+    channels = source.get("channels")
+    if channels is not None and (not isinstance(channels, list) or not all(isinstance(x, str) for x in channels)):
+        raise ValueError(f"{SOURCE_PATH}: 'channels' must be a list of strings when present.")
+    return source
+
+
+def _build_index_mappings(metadatas: List[Dict]) -> Dict[str, Dict[str, str]]:
+    """Create immutable station/channel mappings and reject ambiguous exports."""
+    station_index_to_name: Dict[str, str] = {}
+    channel_index_to_type: Dict[str, str] = {}
+    for i, metadata in enumerate(metadatas):
+        try:
+            station_idx = str(int(metadata["station_idx"]))
+            station_name = str(metadata["station_name"])
+            channel_idx = str(int(metadata.get("channel_idx", 0)))
+            channel_type = str(metadata.get("channel_type", ""))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid station/channel metadata at row {i}: {metadata!r}") from exc
+        if not station_name or not channel_type:
+            raise ValueError(f"Missing station_name or channel_type in metadata row {i}.")
+        if station_idx in station_index_to_name and station_index_to_name[station_idx] != station_name:
+            raise ValueError(
+                f"station_idx {station_idx} maps to both {station_index_to_name[station_idx]!r} "
+                f"and {station_name!r}."
+            )
+        if channel_idx in channel_index_to_type and channel_index_to_type[channel_idx] != channel_type:
+            raise ValueError(
+                f"channel_idx {channel_idx} maps to both {channel_index_to_type[channel_idx]!r} "
+                f"and {channel_type!r}."
+            )
+        station_index_to_name[station_idx] = station_name
+        channel_index_to_type[channel_idx] = channel_type
+    return {
+        "station_index_to_name": dict(sorted(station_index_to_name.items(), key=lambda item: int(item[0]))),
+        "channel_index_to_type": dict(sorted(channel_index_to_type.items(), key=lambda item: int(item[0]))),
+    }
 
 
 class STFTDataWithMetadataConditionDataset(Dataset):
@@ -219,14 +326,13 @@ class STFTDataWithMetadataConditionDataset(Dataset):
 
 
 def _load_source_stft_config() -> Dict[str, int]:
-    source_path = Path("embeddings/source.json")
     defaults = {"nperseg": 256, "noverlap": 192, "nfft": 256, "resample_hz": 100.0, "target_seconds": 70.0}
-    if not source_path.exists():
+    if not SOURCE_PATH.exists():
         print("[train] embeddings/source.json not found; using default STFT params.")
         return defaults
 
     try:
-        payload = json.load(open(source_path, "r"))
+        payload = _read_json(SOURCE_PATH)
         stft = payload.get("stft", {})
         return {
             "nperseg": int(stft.get("nperseg", defaults["nperseg"])),
@@ -510,14 +616,42 @@ if args.use_wandb:
     )
     print(f"[train] wandb tracking: {wb.project}/{wb.id} ({wb.name})")
 
-# --- Shared metadata conditioning ---
-metadatas = json.load(open("embeddings/metadata.json", "r"))
-station_locations_path = Path("embeddings/station_locations.json")
+# --- Shared metadata conditioning / embedding provenance ---
+# Read and validate the source artifact before deriving any split or statistics.
+# This prevents an AE/embedding export mismatch from being silently recorded in a
+# diffusion checkpoint that later cannot be reconstructed.
+embedding_source = _validate_embedding_source(_read_json(SOURCE_PATH))
+embedding_source_sha256 = _sha256_file(SOURCE_PATH)
+recorded_ae_path = Path(embedding_source["ae_checkpoint"]).expanduser()
+ae_candidates = [recorded_ae_path]
+if not recorded_ae_path.is_absolute():
+    ae_candidates = [Path.cwd() / recorded_ae_path, SOURCE_PATH.parent / recorded_ae_path]
+ae_checkpoint_path = next((path.resolve() for path in ae_candidates if path.is_file()), None)
+if ae_checkpoint_path is None:
+    raise FileNotFoundError(
+        f"AE checkpoint recorded by {SOURCE_PATH} does not exist: "
+        f"{embedding_source['ae_checkpoint']!r}."
+    )
+ae_checkpoint_sha256 = _sha256_file(ae_checkpoint_path)
+metadatas = _read_json(METADATA_PATH)
+if not isinstance(metadatas, list):
+    raise ValueError(f"{METADATA_PATH} must contain a JSON list.")
+if not metadatas:
+    raise ValueError(f"{METADATA_PATH} is empty.")
+index_mappings = _build_index_mappings(metadatas)
+
+if int(embedding_source["num_embeddings"]) != len(metadatas):
+    raise ValueError(
+        f"Embedding source count ({embedding_source['num_embeddings']}) != metadata count "
+        f"({len(metadatas)}). Recreate embeddings so their artifacts match."
+    )
+
+station_locations_path = EMBEDDINGS_DIR / "station_locations.json"
 if not station_locations_path.exists():
     raise FileNotFoundError(
         f"Missing {station_locations_path}. Run fetch_station_locations.py first."
     )
-station_locations = json.load(open(station_locations_path, "r"))
+station_locations = _read_json(station_locations_path)
 
 station_vs30 = None
 if args.use_vs30:
@@ -527,7 +661,7 @@ if args.use_vs30:
             f"Missing {vs30_path}. Run compute_station_vs30.py first to build the "
             "station -> Vs30 lookup."
         )
-    station_vs30 = json.load(open(vs30_path, "r"))
+    station_vs30 = _read_json(vs30_path)
     print(f"[train] Vs30 conditioning enabled ({len(station_vs30)} stations).")
 
 raw_cond_vectors = torch.stack(
@@ -541,14 +675,10 @@ raw_cond_vectors = torch.stack(
         for m in metadatas
     ]
 )
-cond_mean = raw_cond_vectors[:, :NUM_CONTINUOUS].mean(dim=0)
-cond_std = raw_cond_vectors[:, :NUM_CONTINUOUS].std(dim=0).clamp(min=1e-8)
-cond_vectors = raw_cond_vectors.clone()
-cond_vectors[:, :NUM_CONTINUOUS] = (cond_vectors[:, :NUM_CONTINUOUS] - cond_mean) / cond_std
 
 # --- Train/val split ---
 # A single reproducible permutation drives the split for both data modes.
-num_total = len(cond_vectors)
+num_total = len(raw_cond_vectors)
 val_fraction = float(args.val_fraction)
 if val_fraction < 0 or val_fraction >= 1:
     raise ValueError(f"--val_fraction must be in [0, 1); got {val_fraction}.")
@@ -600,6 +730,23 @@ if NUM_HELD_OUT_STATIONS > 0:
         f"-> {len(held_out_indices)} samples excluded from train/val"
     )
 
+# Fit continuous conditioning statistics only after the final train split is
+# known. In particular, validation and held-out stations must not influence
+# z-score parameters used by the model.
+train_raw_continuous = raw_cond_vectors[train_indices, :NUM_CONTINUOUS]
+cond_mean = train_raw_continuous.mean(dim=0)
+cond_std = train_raw_continuous.std(dim=0, unbiased=False).clamp(min=1e-8)
+if not torch.isfinite(cond_mean).all() or not torch.isfinite(cond_std).all():
+    raise ValueError("Non-finite train-only conditioning normalization statistics.")
+cond_vectors = raw_cond_vectors.clone()
+cond_vectors[:, :NUM_CONTINUOUS] = (
+    cond_vectors[:, :NUM_CONTINUOUS] - cond_mean
+) / cond_std
+print(
+    f"[train] conditioning normalization fit on {len(train_indices)} final train samples "
+    f"(validation and held-out stations excluded)."
+)
+
 # Keep the fixed preview sample inside the train split for stable monitoring.
 fixed_real_idx = train_indices[0]
 fixed_real_cond = raw_cond_vectors[fixed_real_idx]
@@ -609,16 +756,32 @@ fixed_real_stft = None
 
 # --- Data mode specific setup ---
 if args.data_mode == "latent":
-    data_tensor = torch.load("embeddings/embeddings.pt", map_location="cpu").float()
+    data_tensor = torch.load(EMBEDDINGS_PATH, map_location="cpu").float()
     if len(data_tensor) != len(cond_vectors):
         raise ValueError(
             f"Embeddings count ({len(data_tensor)}) != metadata count ({len(cond_vectors)})."
         )
+    if data_tensor.ndim != 4:
+        raise ValueError(
+            f"Expected 4D embedding tensor (N, C, H, W), got shape {tuple(data_tensor.shape)}."
+        )
+    expected_embedding_shape = tuple(int(dim) for dim in embedding_source["embedding_shape"])
+    if tuple(data_tensor.shape[1:]) != expected_embedding_shape:
+        raise ValueError(
+            f"Embedding tensor shape {tuple(data_tensor.shape[1:])} != source.json "
+            f"embedding_shape {expected_embedding_shape}. Recreate embeddings so the artifacts match."
+        )
+    if not torch.isfinite(data_tensor).all():
+        raise ValueError("Embedding tensor contains non-finite values.")
 
-    data_mean = 0.0
-    # Estimate the normalization scale from the train split only.
-    data_std = float(data_tensor[train_indices].std().item())
-    train_data = data_tensor / data_std
+    # Standardize using *only* final train examples. A non-zero latent mean is
+    # normal for an AE and must be removed before diffusion training.
+    train_embeddings = data_tensor[train_indices]
+    data_mean = float(train_embeddings.mean().item())
+    data_std = float(train_embeddings.std(unbiased=False).clamp(min=1e-8).item())
+    if not math.isfinite(data_mean) or not math.isfinite(data_std):
+        raise ValueError("Non-finite train-only latent normalization statistics.")
+    train_data = (data_tensor - data_mean) / data_std
     fixed_real_stft = decode_embedding(data_tensor[fixed_real_idx])
     full_dataset = TensorDataset(train_data, cond_vectors)
     train_dataset = Subset(full_dataset, train_indices)
@@ -627,7 +790,10 @@ if args.data_mode == "latent":
     data_shape = tuple(train_data.shape[1:])
     num_workers = 0
 
-    print(f"[train] data_mode=latent, shape={data_shape}, std={data_std:.6f}")
+    print(
+        f"[train] data_mode=latent, shape={data_shape}, "
+        f"mean={data_mean:.6f}, std={data_std:.6f} (fit on final train split only)"
+    )
 
 else:
     stft_cfg = _load_source_stft_config()
@@ -726,10 +892,22 @@ noise_scheduler = DDPMScheduler(
 print(f"Prediction target: {args.prediction_target} (scheduler prediction_type={PREDICTION_TARGET})")
 
 scale_payload = {
+    "schema_version": 2,
     "emb_mean": float(data_mean),
     "emb_std": float(data_std),
+    "data_normalization": {
+        "mean": float(data_mean),
+        "std": float(data_std),
+        "fit_split": "train",
+    },
     "cond_mean": cond_mean.tolist(),
     "cond_std": cond_std.tolist(),
+    "conditioning_normalization": {
+        "mean": cond_mean.tolist(),
+        "std": cond_std.tolist(),
+        "num_continuous": NUM_CONTINUOUS,
+        "fit_split": "train",
+    },
     "num_continuous": NUM_CONTINUOUS,
     "use_vs30": bool(args.use_vs30),
     "include_station_id": bool(args.include_station_id),
@@ -745,8 +923,34 @@ scale_payload = {
     "val_fraction": float(val_fraction),
     "train_indices": train_indices,
     "val_indices": val_indices,
+    "held_out_indices": held_out_indices,
+    "held_out_station_ids": held_out_station_ids,
+    "mappings": index_mappings,
 }
-json.dump(scale_payload, open("embeddings/scale.json", "w"))
+embedding_provenance = {
+    "schema_version": 1,
+    "source_path": str(SOURCE_PATH.resolve()),
+    "source_sha256": embedding_source_sha256,
+    "source": embedding_source,
+    "ae_checkpoint": str(ae_checkpoint_path),
+    "ae_checkpoint_sha256": ae_checkpoint_sha256,
+    # Direct aliases make the critical inverse-normalization contract easy for
+    # inference tools to consume without unpacking the nested source snapshot.
+    "normalization_mode": embedding_source["normalization_mode"],
+    "global_min": embedding_source.get("global_min"),
+    "global_max": embedding_source.get("global_max"),
+    "normalization": {
+        "mode": embedding_source["normalization_mode"],
+        "global_min": embedding_source.get("global_min"),
+        "global_max": embedding_source.get("global_max"),
+    },
+    "stft": embedding_source["stft"],
+    "channels": embedding_source.get("channels"),
+    "num_embeddings": int(embedding_source["num_embeddings"]),
+    "embedding_shape": [int(dim) for dim in embedding_source["embedding_shape"]],
+}
+with (EMBEDDINGS_DIR / "scale.json").open("w", encoding="utf-8") as handle:
+    json.dump(scale_payload, handle, indent=2)
 if wb is not None:
     wb.config.update(
         {
@@ -879,22 +1083,48 @@ def _save_checkpoint(ckpt_name: str):
     ckpt_path.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(str(ckpt_path))
     noise_scheduler.save_pretrained(str(ckpt_path))
-    json.dump(
-        {
-            "data_mode": args.data_mode,
-            "training_type": TRAINING_TYPE,
-            "experiment_name": EXPERIMENT_NAME,
-            "data_shape": [int(data_shape[0]), int(data_shape[1]), int(data_shape[2])],
-            "emb_mean": float(data_mean),
-            "emb_std": float(data_std),
-            "num_continuous": NUM_CONTINUOUS,
-            "station_emb_dim": STATION_EMB_DIM,
-            "include_station_id": bool(args.include_station_id),
-            "stft_freq_bins": int(data_shape[1]) if args.data_mode == "stft" else None,
-            "stft_time_bins": int(data_shape[2]) if args.data_mode == "stft" else None,
+    training_config = {
+        "schema_version": 2,
+        "data_mode": args.data_mode,
+        "training_type": TRAINING_TYPE,
+        "experiment_name": EXPERIMENT_NAME,
+        "data_shape": [int(data_shape[0]), int(data_shape[1]), int(data_shape[2])],
+        # Legacy aliases remain so existing consumers continue to work.
+        "emb_mean": float(data_mean),
+        "emb_std": float(data_std),
+        "data_normalization": scale_payload["data_normalization"],
+        "conditioning_normalization": scale_payload["conditioning_normalization"],
+        "num_continuous": NUM_CONTINUOUS,
+        "station_emb_dim": STATION_EMB_DIM,
+        "include_station_id": bool(args.include_station_id),
+        "num_channels": num_channels,
+        "channel_emb_dim": CHANNEL_EMB_DIM,
+        "stft_freq_bins": int(data_shape[1]) if args.data_mode == "stft" else None,
+        "stft_time_bins": int(data_shape[2]) if args.data_mode == "stft" else None,
+        # A complete, checkpoint-local record of the embedding export is the
+        # source of truth at inference time. Never rely on a future mutable
+        # embeddings/source.json when reconstructing this model.
+        "embedding_provenance": embedding_provenance,
+        "embedding_scale": scale_payload,
+        "split": {
+            "split_seed": int(args.split_seed),
+            "val_fraction": float(val_fraction),
+            "train_indices": train_indices,
+            "val_indices": val_indices,
+            "held_out_indices": held_out_indices,
+            "held_out_station_ids": held_out_station_ids,
         },
-        open(ckpt_path / "training_config.json", "w"),
-    )
+        "mappings": index_mappings,
+    }
+    with (ckpt_path / "training_config.json").open("w", encoding="utf-8") as handle:
+        json.dump(training_config, handle, indent=2)
+    # Sidecar copies make provenance discoverable without parsing a large
+    # training_config and keep the checkpoint self-contained when embeddings
+    # are regenerated for a subsequent experiment.
+    with (ckpt_path / "embedding_source.json").open("w", encoding="utf-8") as handle:
+        json.dump(embedding_source, handle, indent=2)
+    with (ckpt_path / "embedding_scale.json").open("w", encoding="utf-8") as handle:
+        json.dump(scale_payload, handle, indent=2)
     print(f"Checkpoint saved to {ckpt_path}")
 
 
@@ -1028,6 +1258,5 @@ writer.close()
 if wb is not None:
     wb.finish()
 final_model_path = CHECKPOINT_ROOT / "unet2d"
-model.save_pretrained(str(final_model_path))
-noise_scheduler.save_pretrained(str(final_model_path))
+_save_checkpoint("unet2d")
 print(f"Model saved to {final_model_path}")

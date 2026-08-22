@@ -17,9 +17,9 @@ km by default); records beyond it are never used.
 
 Adaptations vs the paper: single Vs30 column (the network only spans ~400-
 600 m/s), T defaults to 0.3 s (2-15 Hz band), E component, ML magnitudes.
-NOTE: the pinned-amplitude architecture (see evaluate_distributions.py)
-makes the GWM sigma a strong under-estimate, which this metric punishes -
-expect it to flatter the GMM until the amplitude model is probabilistic.
+NOTE: the legacy per-event amplitude model can pin synthetic amplitudes (see
+evaluate_distributions.py), under-estimating GWM sigma. Global-normalized AEs
+do not apply that model.
 
 Run from the project root:
     python eval/evaluate_model_probabilities.py compute [--n_realizations 20]
@@ -146,7 +146,10 @@ def run_compute(args):
     print(f"[eval] real cache: {real_path.name}")
 
     # ── GWM moments per bin center ───────────────────────────────────────────
-    sweep_path = OUT_DIR / f"prob_gwm_{tag}_n{args.n_realizations}.npz"
+    from gwm_sampling import GwmSampler
+    sampler = GwmSampler(args.checkpoint, args.ae_checkpoint)
+    sweep_path = OUT_DIR / (f"prob_gwm_{tag}_model{sampler.cache_tag}"
+                            f"_n{args.n_realizations}.npz")
     if sweep_path.exists():
         print(f"[eval] GWM cache exists: {sweep_path.name}")
         return real_path, sweep_path
@@ -189,9 +192,6 @@ def run_compute(args):
             }))
     pairs = [(p, ri) for p in points for ri in range(args.n_realizations)]
 
-    from gwm_sampling import GwmSampler
-
-    sampler = GwmSampler(args.checkpoint, args.ae_checkpoint)
     sa = np.full((len(mag_centers), len(dist_centers), args.n_realizations),
                  np.nan)
     code = f"{channel_type}E"

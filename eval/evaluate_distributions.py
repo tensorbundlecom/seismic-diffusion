@@ -14,17 +14,10 @@ The scenario defaults to the test-split record closest to the test split's
 median magnitude, median hypocentral distance, and median Vs30 (z-scored
 nearest neighbour); override with --example_index.
 
-ARCHITECTURAL CAVEAT: this pipeline rescales every synthetic to the
-AmplitudeMLP's deterministic per-channel amplitude prediction, and the
-amplitude model pins the counts-domain *maximum* (amp_stats.json metric
-"max"). Realizations of the same scenario therefore share one counts-domain
-peak: the PGA spread seen here comes only from spectral-shape differences
-passing through the ACC response deconvolution (differentiation), and the
-PGV spread is close to zero. Unlike the paper's model - which generates
-amplitudes freely - this figure measures a *lower bound* on the conditional
-variability and mainly diagnoses that design choice. The across-scenario
-variability evaluated by evaluate_residual_distributions.py is the fairer
-comparison to real-data sigma.
+ARCHITECTURAL NOTE: legacy per-event-normalized AEs rescale each synthetic to
+the AmplitudeMLP's deterministic per-channel amplitude prediction. Their
+realizations can therefore share one counts-domain peak. Global-normalized AEs
+recover amplitude from the decoded spectrogram and do not apply that rescale.
 
 Run from the project root:
     python eval/evaluate_distributions.py compute [--n_realizations 100]
@@ -75,9 +68,8 @@ def pick_median_scenario(indices, metadatas, station_locations, station_vs30):
 
 # ── compute stage ─────────────────────────────────────────────────────────────
 def run_compute(args):
-    import torch
     import evaluate_first_order as fo
-    from ML.diffusion.model import create_conditioning_vector
+    from gwm_sampling import GwmSampler
 
     metadatas = json.load(open(DIFF_DIR / "embeddings" / "metadata.json"))
     station_locations = json.load(open(DIFF_DIR / "embeddings" / "station_locations.json"))
@@ -111,60 +103,12 @@ def run_compute(args):
           f"R_hyp {feats[1]:.0f} km, Vs30 {feats[2]:.0f} m/s, "
           f"station {meta['station_name']}")
 
-    out_path = OUT_DIR / f"realizations_{tag}_idx{ex_idx}_n{args.n_realizations}.npz"
+    sampler = GwmSampler(args.checkpoint, args.ae_checkpoint)
+    out_path = OUT_DIR / (f"realizations_{tag}_idx{ex_idx}_model{sampler.cache_tag}"
+                          f"_n{args.n_realizations}.npz")
     if out_path.exists():
         print(f"[eval] realizations cache exists: {out_path.name}")
         return out_path
-
-    # Model stack and conditioning, as in evaluate_first_order.run_compute.
-    ckpt_dir = Path(args.checkpoint) if args.checkpoint else fo.find_latest_checkpoint()
-    unet, scheduler, ckpt_cfg = fo.load_diffusion(ckpt_dir)
-    training_type = ckpt_cfg.get("training_type", "ddpm")
-    data_shape = tuple(ckpt_cfg["data_shape"])
-    data_mode = ckpt_cfg.get("data_mode", "latent")
-    emb_std = float(ckpt_cfg.get("emb_std", 1.0))
-    emb_mean = float(ckpt_cfg.get("emb_mean", 0.0))
-    ae_model = None
-    if data_mode == "latent":
-        ae_ckpt = args.ae_checkpoint or fo._source.get("ae_checkpoint")
-        ae_model, _ = fo.load_model(ae_ckpt, device=fo.DEVICE)
-        ae_model.eval()
-    amp_model, amp_stats = fo.load_amplitude()
-    amp_metric = amp_stats.get("metric", "std")
-    log_std_mean = torch.tensor(amp_stats["log_std_mean"], dtype=torch.float32)
-    log_std_scale = torch.tensor(amp_stats["log_std_scale"], dtype=torch.float32)
-    gain_mean = torch.tensor(amp_stats["gain_mean"], dtype=torch.float32)
-    gain_scale = torch.tensor(amp_stats["gain_scale"], dtype=torch.float32)
-
-    cond_mean = torch.tensor(fo._scale["cond_mean"], dtype=torch.float32)
-    cond_std = torch.tensor(fo._scale["cond_std"], dtype=torch.float32).clamp(min=1e-8)
-    diff_nc = int(unet.num_continuous)
-    amp_nc = int(amp_model.num_continuous)
-    need_vs30 = max(diff_nc, amp_nc) >= 7
-    full = create_conditioning_vector(
-        meta, station_locations, station_vs30 if need_vs30 else None)
-    nc_full = full.shape[0] - 2
-
-    def normed(nc):
-        v = full.clone()
-        v[:nc] = (v[:nc] - cond_mean[:nc]) / cond_std[:nc]
-        return v
-
-    d = normed(diff_nc)
-    parts = [d[:diff_nc], d[nc_full:nc_full + 1]]
-    if unet.use_channel:
-        parts.append(d[nc_full + 1:nc_full + 2])
-    diff_cond = torch.cat(parts)
-    a = normed(amp_nc)
-    amp_cond = torch.cat([a[:amp_nc], a[nc_full:nc_full + 1]])
-
-    with torch.no_grad():
-        raw = amp_model(amp_cond.unsqueeze(0).to(fo.DEVICE)).cpu()[0]
-    amp_scales = torch.exp(raw[:3] * log_std_scale + log_std_mean)
-    if raw.shape[0] >= 6:
-        gains = (raw[3:6] * gain_scale + gain_mean).clamp(0.1, 20.0)
-    else:
-        gains = torch.full_like(amp_scales, 1.0)
 
     station = meta["station_name"]
     code = f"{meta.get('channel_type', 'HH')}{channel}"
@@ -175,26 +119,11 @@ def run_compute(args):
     with ProcessPoolExecutor(max_workers=args.num_workers) as pool:
         for start in range(0, args.n_realizations, args.batch_size):
             b = min(args.batch_size, args.n_realizations - start)
-            cond_batch = diff_cond.repeat(b, 1).unsqueeze(1).to(fo.DEVICE)
-            x = fo.sample_batch(unet, scheduler, cond_batch, data_shape,
-                                args.steps, training_type, seed=args.seed + start)
-            x = x * emb_std + emb_mean
-            if data_mode == "latent":
-                with torch.no_grad():
-                    specs = ae_model.decode(x)
-            else:
-                specs = x
-            specs = specs.clamp(min=0.0)[:, :3, :fo.FREQ_BINS, :].cpu().numpy()
-            jobs = [
-                (specs[k, channel_idx], float(gains[channel_idx]),
-                 float(amp_scales[channel_idx]), amp_metric, args.gl_iters,
-                 station, code, event_id)
-                for k in range(b)
-            ]
-            for k, out in zip(range(start, start + b), pool.map(fo._process_synth, jobs)):
-                if out is None:
+            waves = sampler.generate([meta] * b, args.steps, args.gl_iters,
+                                     args.seed + start, pool, channel_idx=channel_idx)
+            for k, wave in zip(range(start, start + b), waves):
+                if wave is None:
                     continue
-                wave = out[0].astype(np.float64)
                 acc = _deconvolve(wave, station, code, event_id, "ACC")
                 vel = _deconvolve(wave, station, code, event_id, "VEL")
                 if acc is not None:

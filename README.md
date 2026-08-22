@@ -2,6 +2,8 @@
 
 An exploration of applying diffusion models to seismic waveform data from the Marmara region of Turkey.
 
+For the checkpoint and reconstruction contracts that connect globally normalized autoencoders to latent diffusion, see the [project documentation](docs/README.md).
+
 ## Data
 
 This project works with seismic waveform data from earthquake events in the Marmara Sea region of Turkey, spanning from 2014 to present. The data was sourced from Kandilli Observatory seismic network.
