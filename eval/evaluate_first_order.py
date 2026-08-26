@@ -1,7 +1,7 @@
 """
 First-order seismogram characteristics on the test split (GWM paper, Fig. 3).
 
-For every held-out sample (scale.json val_indices) this compares, per magnitude
+For every held-out sample (the checkpoint's validation split) this compares, per magnitude
 bin, the distribution (mean ± std) of:
   - time-domain log-amplitude envelopes, and
   - Fourier amplitude spectrum log-amplitudes
@@ -11,11 +11,12 @@ channel). Pairing the conditioning makes the marginal comparison meaningful:
 both populations share the same joint distribution of everything except the
 waveform itself.
 
-Both real and synthetic waveforms are deconvolved with the station's instrument
-response (FDSN level="response", see fetch_station_responses.py) so amplitudes
-are ground acceleration in m/s^2 like the paper, not digitizer counts. The
-synthetic pipeline matches demo/app.py: diffusion sampling -> VAE decode ->
-Griffin-Lim -> response deconvolution. Legacy per-event-normalized AEs also
+Both real and synthetic waveforms are converted to ground acceleration in
+m/s^2. Counts-domain checkpoints use station response removal (FDSN
+level="response", see fetch_station_responses.py); physical-acceleration
+checkpoints are already in that unit and bypass it. The synthetic pipeline is
+diffusion sampling -> VAE decode -> Griffin-Lim -> domain-aware conversion.
+Legacy per-event-normalized AEs also
 apply the historical AmplitudeMLP gain and waveform rescale; globally
 normalized AEs recover magnitude directly and bypass that model.
 
@@ -24,8 +25,8 @@ Run from the project root:
     python eval/evaluate_first_order.py plot    [--bins 1,1.5,2,2.5,3,3.5,4.5,6]
     python eval/evaluate_first_order.py all     [...]
 
-`compute` is resumable: per-sample features (and the generated counts-domain
-waveforms) are cached in eval/first_order/ and only missing samples are
+`compute` is resumable: per-sample features (and generated waveforms in their
+recorded domain) are cached in eval/first_order/ and only missing samples are
 processed on re-runs. `plot` only needs the cache, so bins can be changed
 without regenerating.
 """
@@ -59,10 +60,21 @@ from ML.diffusion.reconstruction import (               # noqa: E402
     postprocess_griffinlim_waveform,
     resolve_reconstruction_spec,
 )
+from ML.diffusion.waveform_domain import (               # noqa: E402
+    INSTRUMENT_COUNTS,
+    physical_acceleration_to_motion,
+)
+from embedding_artifacts import (  # noqa: E402
+    artifact_path,
+    deterministic_fraction_subset,
+    deterministic_selection_tag,
+    resolve_embeddings_dir,
+)
+from output_paths import evaluation_output_dir  # noqa: E402
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-EVAL_DIR = ROOT / "eval" / "first_order"
+EVAL_DIR = evaluation_output_dir("first_order")
 RESPONSES_XML = ROOT / "eval" / "station_responses.xml"
 CHANNEL_NAMES = ["E", "N", "Z"]
 
@@ -82,8 +94,24 @@ GL_MOMENTUM = 0.99
 GL_WINDOW = "hann"
 GL_RANDOM_STATE = 0
 
-_scale = json.load(open(DIFF_DIR / "embeddings" / "scale.json"))
-_source = json.load(open(DIFF_DIR / "embeddings" / "source.json"))
+EMBEDDINGS_DIR = resolve_embeddings_dir(None)
+_DEFAULT_STFT = {
+    "nperseg": 256,
+    "noverlap": 192,
+    "nfft": 256,
+    "resample_hz": 100.0,
+    "target_seconds": 70.0,
+}
+_scale = {}
+_source = {"stft": dict(_DEFAULT_STFT)}
+_default_scale_path = artifact_path(EMBEDDINGS_DIR, "scale.json")
+_default_source_path = artifact_path(EMBEDDINGS_DIR, "source.json")
+if _default_scale_path.is_file():
+    with _default_scale_path.open(encoding="utf-8") as handle:
+        _scale = json.load(handle)
+if _default_source_path.is_file():
+    with _default_source_path.open(encoding="utf-8") as handle:
+        _source = json.load(handle)
 STFT_CFG = _source["stft"]
 FS = float(STFT_CFG.get("resample_hz", 100.0))
 TARGET_SECONDS = float(STFT_CFG.get("target_seconds", 70.0))
@@ -115,6 +143,23 @@ def configure_stft(stft: dict | None) -> None:
     FREQ_BINS = nfft // 2 + 1
     ENV_LEN = int(np.ceil(TARGET_SAMPLES / ENV_DECIMATE))
     SPEC_LEN = int(np.ceil((TARGET_SAMPLES // 2 + 1) / SPEC_DECIMATE))
+
+
+def configure_embeddings_dir(path: str | Path | None) -> Path:
+    """Select the embedding export used for metadata and legacy provenance."""
+    global EMBEDDINGS_DIR, _scale, _source, STFT_CFG
+    EMBEDDINGS_DIR = resolve_embeddings_dir(path)
+    scale_path = artifact_path(EMBEDDINGS_DIR, "scale.json")
+    if scale_path.is_file():
+        with scale_path.open(encoding="utf-8") as handle:
+            _scale = json.load(handle)
+    else:
+        _scale = {}
+    with artifact_path(EMBEDDINGS_DIR, "source.json").open(encoding="utf-8") as handle:
+        _source = json.load(handle)
+    STFT_CFG = dict(_source["stft"])
+    configure_stft(STFT_CFG)
+    return EMBEDDINGS_DIR
 
 
 # ── Response deconvolution (runs in worker processes) ─────────────────────────
@@ -153,8 +198,11 @@ def _find_channel_epoch(station: str, channel_code: str, t):
 
 
 def deconvolve_to_acc(data: np.ndarray, station: str, channel_code: str,
-                      event_time_str: str):
-    """Counts -> ground acceleration (m/s^2) via instrument response removal."""
+                      event_time_str: str,
+                      waveform_domain: str = INSTRUMENT_COUNTS):
+    """Convert the recorded waveform domain to ground acceleration in m/s^2."""
+    if waveform_domain != INSTRUMENT_COUNTS:
+        return physical_acceleration_to_motion(data, "ACC", FS)
     from obspy import Trace, UTCDateTime
 
     try:
@@ -215,7 +263,7 @@ def waveform_features(x: np.ndarray):
 
 def _process_real(args):
     """Worker: real waveform file -> deconvolved (log_env, log_fas)."""
-    path_str, channel, station, channel_code, event_id = args
+    path_str, channel, station, channel_code, event_id, waveform_domain = args
     try:
         from obspy import read as obspy_read
 
@@ -227,7 +275,7 @@ def _process_real(args):
         if abs(trace.stats.sampling_rate - FS) > 1e-6:
             trace.resample(FS)
         data = _crop_pad(trace.data.astype(np.float64))
-        acc = deconvolve_to_acc(data, station, channel_code, event_id)
+        acc = deconvolve_to_acc(data, station, channel_code, event_id, waveform_domain)
         if acc is None:
             return None
         return waveform_features(acc)
@@ -274,7 +322,9 @@ def _process_synth(args):
         )
         wave = _crop_pad(wave)
 
-        acc = deconvolve_to_acc(wave, station, channel_code, event_id)
+        acc = deconvolve_to_acc(
+            wave, station, channel_code, event_id, reconstruction.waveform_domain
+        )
         if acc is None:
             return None
         env, fas = waveform_features(acc)
@@ -287,8 +337,9 @@ def _process_synth(args):
 def find_latest_checkpoint():
     """Most recent diffusion checkpoint dir (by mtime) with a training config."""
     candidates = [
-        p for p in (DIFF_DIR / "checkpoints").glob("*/*")
-        if (p / "training_config.json").exists()
+        config.parent
+        for config in (DIFF_DIR / "checkpoints").rglob("training_config.json")
+        if not any(part.startswith(".") for part in config.parts)
     ]
     if not candidates:
         raise FileNotFoundError("No diffusion checkpoint with training_config.json found.")
@@ -370,8 +421,8 @@ def init_or_load_cache(path: Path, test_indices):
         "spec_real": np.full((n, SPEC_LEN), np.nan, dtype=np.float32),
         "env_synth": np.full((n, ENV_LEN), np.nan, dtype=np.float32),
         "spec_synth": np.full((n, SPEC_LEN), np.nan, dtype=np.float32),
-        # Generated waveforms in counts domain (pre-deconvolution), so units
-        # and feature definitions can change without re-sampling the model.
+        # Generated waveforms stay in the model's recorded domain. Consumers
+        # use waveform_domain to decide whether response removal is needed.
         "wave_synth": np.full((n, TARGET_SAMPLES), np.nan, dtype=np.float32),
     }
 
@@ -385,13 +436,9 @@ def save_cache(path: Path, cache: dict):
 
 # ── compute stage ─────────────────────────────────────────────────────────────
 def run_compute(args):
-    if not RESPONSES_XML.exists():
-        raise FileNotFoundError(
-            f"Missing {RESPONSES_XML}. Run eval/fetch_station_responses.py first."
-        )
-    metadatas = json.load(open(DIFF_DIR / "embeddings" / "metadata.json"))
-    station_locations = json.load(open(DIFF_DIR / "embeddings" / "station_locations.json"))
-    vs30_path = DIFF_DIR / "embeddings" / "station_vs30.json"
+    metadatas = json.load(open(artifact_path(EMBEDDINGS_DIR, "metadata.json")))
+    station_locations = json.load(open(artifact_path(EMBEDDINGS_DIR, "station_locations.json")))
+    vs30_path = artifact_path(EMBEDDINGS_DIR, "station_vs30.json")
     station_vs30 = json.load(open(vs30_path)) if vs30_path.exists() else None
 
     channel = CHANNEL_NAMES.index(args.channel)
@@ -404,12 +451,22 @@ def run_compute(args):
 
     ckpt_dir = Path(args.checkpoint) if args.checkpoint else find_latest_checkpoint()
     unet, scheduler, ckpt_cfg = load_diffusion(ckpt_dir)
-    checkpoint_split = ckpt_cfg.get("split", {})
-    test_indices = list(checkpoint_split.get("val_indices", _scale["val_indices"]))
-    if args.limit and args.limit < len(test_indices):
-        # Evenly spaced subset keeps the magnitude distribution representative.
-        picks = np.linspace(0, len(test_indices) - 1, num=args.limit, dtype=int)
-        test_indices = [test_indices[i] for i in picks]
+    checkpoint_scale = ckpt_cfg.get("embedding_scale", _scale)
+    checkpoint_split = ckpt_cfg.get("split", checkpoint_scale)
+    test_indices_value = checkpoint_split.get("val_indices")
+    if test_indices_value is None:
+        raise ValueError(
+            "Diffusion checkpoint does not record validation indices and no legacy "
+            "scale.json with val_indices was found."
+        )
+    all_test_indices = list(test_indices_value)
+    test_indices = deterministic_fraction_subset(
+        all_test_indices, fraction=args.fraction, limit=args.limit
+    )
+    print(
+        f"[eval] deterministic validation sample: {len(test_indices)}/"
+        f"{len(all_test_indices)} records (fraction={args.fraction:g})"
+    )
     training_type = ckpt_cfg.get("training_type", "ddpm")
     data_shape = tuple(ckpt_cfg["data_shape"])
     data_mode = ckpt_cfg.get("data_mode", "latent")
@@ -423,13 +480,21 @@ def run_compute(args):
 
     source_path = ckpt_dir / "embedding_source.json"
     if not source_path.exists():
-        source_path = DIFF_DIR / "embeddings" / "source.json"
+        source_path = artifact_path(EMBEDDINGS_DIR, "source.json")
     reconstruction = resolve_reconstruction_spec(
         ckpt_cfg, embeddings_source_path=source_path,
         ae_checkpoint_override=args.ae_checkpoint,
+        waveform_domain_override=(
+            None if args.waveform_domain == "auto" else args.waveform_domain
+        ),
     )
     print(f"[eval] AE normalization: {reconstruction.mode} "
           f"(source={reconstruction.source_origin}, id={reconstruction.source_identity})")
+    print(f"[eval] waveform domain: {reconstruction.waveform_domain}")
+    if reconstruction.waveform_domain == INSTRUMENT_COUNTS and not RESPONSES_XML.exists():
+        raise FileNotFoundError(
+            f"Missing {RESPONSES_XML}. Run eval/fetch_station_responses.py first."
+        )
     configure_stft(checkpoint_stft_config(ckpt_cfg, embeddings_source_path=source_path))
     print(f"[eval] STFT reconstruction: nperseg={STFT_CFG['nperseg']} "
           f"noverlap={STFT_CFG['noverlap']} nfft={STFT_CFG['nfft']} "
@@ -457,10 +522,15 @@ def run_compute(args):
         gain_scale = torch.tensor(amp_stats["gain_scale"], dtype=torch.float32)
 
     condition_normalization = ckpt_cfg.get("conditioning_normalization", {})
-    cond_mean = torch.tensor(condition_normalization.get("mean", _scale["cond_mean"]),
-                             dtype=torch.float32)
-    cond_std = torch.tensor(condition_normalization.get("std", _scale["cond_std"]),
-                            dtype=torch.float32).clamp(min=1e-8)
+    cond_mean_value = condition_normalization.get("mean", checkpoint_scale.get("cond_mean"))
+    cond_std_value = condition_normalization.get("std", checkpoint_scale.get("cond_std"))
+    if cond_mean_value is None or cond_std_value is None:
+        raise ValueError(
+            "Diffusion checkpoint does not record conditioning normalization and no "
+            "compatible legacy scale.json was found."
+        )
+    cond_mean = torch.tensor(cond_mean_value, dtype=torch.float32)
+    cond_std = torch.tensor(cond_std_value, dtype=torch.float32).clamp(min=1e-8)
 
     diff_nc = int(unet.num_continuous)
     amp_nc = int(amp_model.num_continuous) if amp_model is not None else 0
@@ -493,7 +563,10 @@ def run_compute(args):
         return diff_cond, amp_cond
 
     path = cache_path(ckpt_dir, args.steps, channel, reconstruction, ckpt_cfg)
+    selection_digest = deterministic_selection_tag(test_indices)
+    path = path.with_name(f"{path.stem}_n{len(test_indices)}_sel{selection_digest}.npz")
     cache = init_or_load_cache(path, test_indices)
+    cache["waveform_domain"] = np.asarray(reconstruction.waveform_domain)
     for j, idx in enumerate(test_indices):
         cache["mags"][j] = float(metadatas[idx]["magnitude"])
 
@@ -511,7 +584,7 @@ def run_compute(args):
         print(f"[eval] real pass: {len(todo_real)} waveforms ({args.num_workers} workers)")
         jobs = [
             (resolve(metadatas[test_indices[j]]), channel,
-             *response_args(metadatas[test_indices[j]]))
+             *response_args(metadatas[test_indices[j]]), reconstruction.waveform_domain)
             for j in todo_real
         ]
         with ProcessPoolExecutor(max_workers=args.num_workers) as pool:
@@ -707,16 +780,32 @@ def main():
                         default="all")
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="Diffusion checkpoint dir (default: most recent).")
+    parser.add_argument(
+        "--embeddings_dir",
+        type=str,
+        default=str(EMBEDDINGS_DIR),
+        help="Embedding export directory used for metadata and station artifacts.",
+    )
     parser.add_argument("--ae_checkpoint", type=str, default=None,
                         help="Autoencoder checkpoint used to decode latents. "
                              "Default: the one recorded by the diffusion checkpoint "
                              "(legacy fallback: embeddings/source.json). "
                              "Must be the AE the diffusion latents were created with.")
+    parser.add_argument(
+        "--waveform_domain",
+        choices=["auto", "instrument_counts", "physical_acceleration"],
+        default="auto",
+        help="Override checkpoint waveform-domain provenance for legacy checkpoints.",
+    )
     parser.add_argument("--steps", type=int, default=1000,
                         help="DDPM inference steps (flow matching caps at 100).")
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--limit", type=int, default=0,
                         help="Evaluate only N evenly-spaced test samples (0 = all).")
+    parser.add_argument(
+        "--fraction", type=float, default=1.0,
+        help="Deterministic evenly-spaced fraction of validation records in (0, 1].",
+    )
     parser.add_argument("--channel", choices=CHANNEL_NAMES, default="E",
                         help="Component to evaluate (paper uses East-West).")
     parser.add_argument("--num_workers", type=int, default=8)
@@ -737,6 +826,7 @@ def main():
     parser.add_argument("--cache", type=str, default=None,
                         help="Cache .npz for `plot` (default: most recent).")
     args = parser.parse_args()
+    configure_embeddings_dir(args.embeddings_dir)
 
     if args.stage in ("compute", "all"):
         path = run_compute(args)

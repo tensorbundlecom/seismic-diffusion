@@ -17,6 +17,7 @@ from tqdm import tqdm
 from model import ConditionalVariationalAutoencoder
 from stft_dataset_with_metadata import SeismicSTFTDatasetWithMetadata, collate_fn_with_metadata
 from normalization_cache import fit_or_load_global_normalization
+from normalization_contract import WAVEFORM_DOMAINS, resolve_amplitude_epsilon
 
 
 def _positive_finite_float(value):
@@ -555,6 +556,12 @@ def parse_args():
     # Data arguments
     parser.add_argument('--data_dir', type=str, default='../../data/filtered_waveforms',
                         help='Path to filtered waveforms directory')
+    parser.add_argument(
+        '--waveform_domain',
+        choices=WAVEFORM_DOMAINS,
+        default='instrument_counts',
+        help='Units/domain of input traces; saved in checkpoints for downstream evaluation.',
+    )
     parser.add_argument('--event_file', type=str, default='../../data/events/20140101_20251101_0.0_9.0_9_339.txt',
                         help='Path to event catalog file')
     parser.add_argument('--channels', type=str, nargs='+', default=['HH'],
@@ -575,10 +582,11 @@ def parse_args():
     parser.add_argument(
         '--amplitude_epsilon',
         type=_positive_finite_float,
-        default=1e-12,
+        default=None,
         help=(
-            'Positive magnitude floor used by log(magnitude + epsilon). The value '
-            'is saved with the normalization contract; legacy checkpoints imply 1.0.'
+            'Positive magnitude floor used by log(magnitude + epsilon). Defaults to '
+            '1.0 for instrument_counts (the legacy log1p contract) and 1e-12 for '
+            'physical_acceleration. The resolved value is saved in checkpoints.'
         ),
     )
     
@@ -629,7 +637,11 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed')
     
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.amplitude_epsilon = resolve_amplitude_epsilon(
+        args.waveform_domain, args.amplitude_epsilon
+    )
+    return args
 
 
 def main():
@@ -648,6 +660,10 @@ def main():
     
     device = torch.device(args.device)
     print(f"Using device: {device}")
+    print(
+        f"Waveform domain: {args.waveform_domain}; "
+        f"amplitude_epsilon={args.amplitude_epsilon:g}."
+    )
     
     # Create dataset
     print(f"Loading dataset from {args.data_dir}...")

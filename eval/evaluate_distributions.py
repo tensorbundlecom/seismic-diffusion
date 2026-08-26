@@ -16,7 +16,7 @@ nearest neighbour); override with --example_index.
 
 ARCHITECTURAL NOTE: legacy per-event-normalized AEs rescale each synthetic to
 the AmplitudeMLP's deterministic per-channel amplitude prediction. Their
-realizations can therefore share one counts-domain peak. Global-normalized AEs
+realizations can therefore share one pre-evaluation waveform peak. Global-normalized AEs
 recover amplitude from the decoded spectrogram and do not apply that rescale.
 
 Run from the project root:
@@ -41,8 +41,14 @@ from evaluate_peak_amplitudes import (  # noqa: E402
     GWM_COLOR, INK, MUTED, GRID,
     _crop_pad, _deconvolve, find_synth_cache,
 )
+from embedding_artifacts import artifact_path, resolve_embeddings_dir  # noqa: E402
+from output_paths import evaluation_output_dir  # noqa: E402
+from ML.diffusion.waveform_domain import (  # noqa: E402
+    INSTRUMENT_COUNTS,
+    normalize_waveform_domain,
+)
 
-OUT_DIR = ROOT / "eval" / "distributions"
+OUT_DIR = evaluation_output_dir("distributions")
 
 
 # ── Scenario selection ────────────────────────────────────────────────────────
@@ -71,13 +77,20 @@ def run_compute(args):
     import evaluate_first_order as fo
     from gwm_sampling import GwmSampler
 
-    metadatas = json.load(open(DIFF_DIR / "embeddings" / "metadata.json"))
-    station_locations = json.load(open(DIFF_DIR / "embeddings" / "station_locations.json"))
-    station_vs30 = json.load(open(DIFF_DIR / "embeddings" / "station_vs30.json"))
+    embeddings_dir = resolve_embeddings_dir(args.embeddings_dir)
+    import evaluate_peak_amplitudes as peaks
+    peaks.configure_embeddings_dir(embeddings_dir)
+    metadatas = json.load(open(artifact_path(embeddings_dir, "metadata.json")))
+    station_locations = json.load(open(artifact_path(embeddings_dir, "station_locations.json")))
+    station_vs30 = json.load(open(artifact_path(embeddings_dir, "station_vs30.json")))
 
     synth_cache_path = Path(args.cache) if args.cache else find_synth_cache()
     with np.load(synth_cache_path) as sc:
         indices = sc["indices"].astype(int).tolist()
+        waveform_domain = normalize_waveform_domain(
+            str(sc["waveform_domain"].item())
+            if "waveform_domain" in sc.files else INSTRUMENT_COUNTS
+        )
     channel = synth_cache_path.stem.rsplit("_ch", 1)[-1].split("_")[0]
     channel_idx = CHANNEL_NAMES.index(channel)
     tag = synth_cache_path.stem.removeprefix("cache_")
@@ -103,7 +116,9 @@ def run_compute(args):
           f"R_hyp {feats[1]:.0f} km, Vs30 {feats[2]:.0f} m/s, "
           f"station {meta['station_name']}")
 
-    sampler = GwmSampler(args.checkpoint, args.ae_checkpoint)
+    sampler = GwmSampler(
+        args.checkpoint, args.ae_checkpoint, waveform_domain, embeddings_dir
+    )
     out_path = OUT_DIR / (f"realizations_{tag}_idx{ex_idx}_model{sampler.cache_tag}"
                           f"_n{args.n_realizations}.npz")
     if out_path.exists():
@@ -124,8 +139,8 @@ def run_compute(args):
             for k, wave in zip(range(start, start + b), waves):
                 if wave is None:
                     continue
-                acc = _deconvolve(wave, station, code, event_id, "ACC")
-                vel = _deconvolve(wave, station, code, event_id, "VEL")
+                acc = _deconvolve(wave, station, code, event_id, "ACC", waveform_domain)
+                vel = _deconvolve(wave, station, code, event_id, "VEL", waveform_domain)
                 if acc is not None:
                     pga[k] = float(np.max(np.abs(acc)))
                 if vel is not None:
@@ -143,15 +158,15 @@ def run_compute(args):
     if abs(trace.stats.sampling_rate - fo.FS) > 1e-6:
         trace.resample(fo.FS)
     data = _crop_pad(trace.data.astype(np.float64))
-    acc = _deconvolve(data, station, code, event_id, "ACC")
-    vel = _deconvolve(data, station, code, event_id, "VEL")
+    acc = _deconvolve(data, station, code, event_id, "ACC", waveform_domain)
+    vel = _deconvolve(data, station, code, event_id, "VEL", waveform_domain)
     real_pga = float(np.max(np.abs(acc))) if acc is not None else np.nan
     real_pgv = float(np.max(np.abs(vel))) if vel is not None else np.nan
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     np.savez(out_path, pga=pga, pgv=pgv, real_pga=real_pga, real_pgv=real_pgv,
              example_index=ex_idx, mag=feats[0], r_hyp=feats[1], vs30=feats[2],
-             station=station)
+             station=station, waveform_domain=waveform_domain)
     print(f"[eval] realizations cache written: {out_path}")
     return out_path
 
@@ -250,6 +265,10 @@ def main():
                              "closest to the test split's median M/R_hyp/Vs30).")
     parser.add_argument("--n_realizations", type=int, default=100)
     parser.add_argument("--checkpoint", type=str, default=None)
+    parser.add_argument(
+        "--embeddings_dir", type=str, default=str(resolve_embeddings_dir(None)),
+        help="Embedding export directory used for metadata and station artifacts.",
+    )
     parser.add_argument("--ae_checkpoint", type=str, default=None)
     parser.add_argument("--steps", type=int, default=1000)
     parser.add_argument("--gl_iters", type=int, default=200)

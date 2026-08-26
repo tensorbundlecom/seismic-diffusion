@@ -24,10 +24,16 @@ def parse_args():
     repo_root = base_dir.parent.parent
     parser = argparse.ArgumentParser(description="Compute per-station Vs30 from a polygon shapefile")
     parser.add_argument(
+        "--embeddings_dir",
+        type=str,
+        default=str(base_dir / "embeddings"),
+        help="Selected embedding export directory used for default input/output paths.",
+    )
+    parser.add_argument(
         "--station_locations",
         type=str,
-        default=str(base_dir / "embeddings" / "station_locations.json"),
-        help="Path to station_locations.json (lon/lat per station).",
+        default=None,
+        help="Path to station_locations.json (defaults inside --embeddings_dir).",
     )
     parser.add_argument(
         "--shapefile",
@@ -44,8 +50,8 @@ def parse_args():
     parser.add_argument(
         "--output",
         type=str,
-        default=str(base_dir / "embeddings" / "station_vs30.json"),
-        help="Output JSON path for the station -> Vs30 lookup.",
+        default=None,
+        help="Output path (defaults to <embeddings_dir>/station_vs30.json).",
     )
     parser.add_argument(
         "--no_nearest_fallback",
@@ -57,6 +63,17 @@ def parse_args():
 
 def main():
     args = parse_args()
+    embeddings_dir = Path(args.embeddings_dir).expanduser().resolve()
+    station_locations_path = (
+        Path(args.station_locations).expanduser().resolve()
+        if args.station_locations
+        else embeddings_dir / "station_locations.json"
+    )
+    output_path = (
+        Path(args.output).expanduser().resolve()
+        if args.output
+        else embeddings_dir / "station_vs30.json"
+    )
     try:
         import geopandas as gpd
         from shapely.geometry import Point
@@ -65,9 +82,9 @@ def main():
             "compute_station_vs30.py requires geopandas/shapely in the active environment."
         ) from exc
 
-    station_locations = json.load(open(args.station_locations, "r"))
+    station_locations = json.load(open(station_locations_path, "r"))
     if not station_locations:
-        raise RuntimeError(f"No stations found in {args.station_locations}")
+        raise RuntimeError(f"No stations found in {station_locations_path}")
 
     names = list(station_locations.keys())
     pts = gpd.GeoDataFrame(
@@ -111,7 +128,6 @@ def main():
                 station_vs30[row["station"]] = float(val)
                 unmatched.remove(row["station"])
 
-    output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
         json.dump(station_vs30, f, indent=2, sort_keys=True)

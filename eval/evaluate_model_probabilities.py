@@ -46,18 +46,34 @@ from evaluate_peak_amplitudes import (  # noqa: E402
 from evaluate_attenuation import (  # noqa: E402
     ATT_GMM_REGISTRY, _sa_real, _sa_synth, destination, event_azimuth,
 )
+from embedding_artifacts import (  # noqa: E402
+    artifact_path,
+    deterministic_fraction_subset,
+    deterministic_selection_tag,
+    resolve_embeddings_dir,
+)
+from output_paths import evaluation_output_dir  # noqa: E402
 
-OUT_DIR = ROOT / "eval" / "model_probabilities"
+OUT_DIR = evaluation_output_dir("model_probabilities")
 LN10 = np.log(10.0)
 
 
 # ── compute stage ─────────────────────────────────────────────────────────────
 def run_compute(args):
+    from gwm_sampling import GwmSampler
+
+    import evaluate_attenuation as attenuation
+
+    embeddings_dir = attenuation.configure_embeddings_dir(args.embeddings_dir)
+    sampler = GwmSampler(
+        args.checkpoint, args.ae_checkpoint, args.waveform_domain, embeddings_dir
+    )
+    waveform_domain = sampler.waveform_domain
     from obspy.geodetics import gps2dist_azimuth
 
-    metadatas = json.load(open(DIFF_DIR / "embeddings" / "metadata.json"))
-    station_locations = json.load(open(DIFF_DIR / "embeddings" / "station_locations.json"))
-    station_vs30 = json.load(open(DIFF_DIR / "embeddings" / "station_vs30.json"))
+    metadatas = json.load(open(artifact_path(embeddings_dir, "metadata.json")))
+    station_locations = json.load(open(artifact_path(embeddings_dir, "station_locations.json")))
+    station_vs30 = json.load(open(artifact_path(embeddings_dir, "station_vs30.json")))
     period = args.period
 
     r_hyp = np.empty(len(metadatas))
@@ -84,19 +100,21 @@ def run_compute(args):
     sta_vs30 = float(station_vs30[sta_name])
     sel_mask = (in_window & (np.abs(vs30s - sta_vs30) <= args.vs30_halfwidth)
                 & (vs30s >= VS30_RANGE[0]) & (vs30s <= VS30_RANGE[1]))
-    sel = sorted(np.flatnonzero(sel_mask))
+    all_sel = sorted(np.flatnonzero(sel_mask))
+    sel = deterministic_fraction_subset(all_sel, args.fraction, args.limit)
     print(f"[eval] selection: M{args.mag_min:g}-{args.mag_max:g}, "
           f"R {args.dist_min:g}-{args.dist_max:g} km, Vs30 "
           f"{sta_vs30:.0f}±{args.vs30_halfwidth:g} -> {len(sel)} records; "
-          f"scenario station {sta_name}")
+          f"scenario station {sta_name}; deterministic real-data sample "
+          f"{len(sel)}/{len(all_sel)} (fraction={args.fraction:g})")
 
     # ── Real pass: SA per record ─────────────────────────────────────────────
     tag = (f"{sta_name}_T{period:g}_M{args.mag_min:g}-{args.mag_max:g}"
            f"_R{args.dist_min:g}-{args.dist_max:g}")
-    real_path = OUT_DIR / f"prob_real_{tag}.npz"
-    if args.limit and args.limit < len(sel):
-        picks = np.linspace(0, len(sel) - 1, num=args.limit, dtype=int)
-        sel = [sel[i] for i in picks]
+    selection_tag = deterministic_selection_tag(sel)
+    real_path = OUT_DIR / (
+        f"prob_real_{tag}_domain{waveform_domain}_n{len(sel)}_sel{selection_tag}.npz"
+    )
     n = len(sel)
     real = None
     if real_path.exists():
@@ -108,6 +126,7 @@ def run_compute(args):
     if real is None:
         real = {
             "indices": np.asarray(sel, dtype=np.int64),
+            "waveform_domain": np.asarray(waveform_domain),
             "mag": mags[sel], "r_hyp": r_hyp[sel],
             "sa": np.full(n, np.nan),
             "done": np.zeros(n, dtype=bool),
@@ -129,7 +148,8 @@ def run_compute(args):
                     m = metadatas[sel[j]]
                     jobs.append((resolve(m), m["station_name"],
                                  m.get("channel_type", "HH"),
-                                 str(m.get("event_id", "")), 0, [period]))
+                                 str(m.get("event_id", "")), 0, [period],
+                                 waveform_domain))
                 for j, out in zip(rows, pool.map(_sa_real, jobs, chunksize=8)):
                     if out is not None:
                         real["sa"][j] = out[0]
@@ -146,8 +166,6 @@ def run_compute(args):
     print(f"[eval] real cache: {real_path.name}")
 
     # ── GWM moments per bin center ───────────────────────────────────────────
-    from gwm_sampling import GwmSampler
-    sampler = GwmSampler(args.checkpoint, args.ae_checkpoint)
     sweep_path = OUT_DIR / (f"prob_gwm_{tag}_model{sampler.cache_tag}"
                             f"_n{args.n_realizations}.npz")
     if sweep_path.exists():
@@ -161,8 +179,9 @@ def run_compute(args):
     mag_centers = 0.5 * (mag_edges[:-1] + mag_edges[1:])
     dist_centers = 0.5 * (dist_edges[:-1] + dist_edges[1:])
 
-    sel_meta = [metadatas[i] for i in sel] or [metadatas[i] for i in
-                                               np.flatnonzero(sel_mask)]
+    # Scenario geometry must remain independent of the observed-data fraction
+    # so cached GWM sweeps are comparable across full and sampled evaluations.
+    sel_meta = [metadatas[i] for i in all_sel]
     depth = float(np.median([float(m["depth"]) for m in sel_meta]))
     snr = float(np.median([float(m.get("snr", 10.0)) for m in sel_meta]))
     sta = station_locations[sta_name]
@@ -201,7 +220,7 @@ def run_compute(args):
             batch = pairs[start:start + args.batch_size]
             waves = sampler.generate([p[2] for p, _ in batch], args.steps,
                                      args.gl_iters, args.seed + start, pool)
-            jobs = [(w, sta_name, code, "", [period])
+            jobs = [(w, sta_name, code, "", [period], waveform_domain)
                     for w in waves if w is not None]
             keep = [k for k, w in enumerate(waves) if w is not None]
             for k, out in zip(keep, pool.map(_sa_synth, jobs)):
@@ -225,7 +244,8 @@ def run_compute(args):
              mu_gwm=mu_gwm, sigma_gwm=sigma_gwm, period=period,
              station=sta_name, sta_vs30=sta_vs30, depth=depth,
              vs30_halfwidth=args.vs30_halfwidth,
-             n_realizations=args.n_realizations)
+             n_realizations=args.n_realizations,
+             waveform_domain=waveform_domain)
     print(f"[eval] GWM cache written: {sweep_path.name}")
     return real_path, sweep_path
 
@@ -374,7 +394,17 @@ def main():
     parser.add_argument("--dist_step", type=float, default=10.0)
     parser.add_argument("--n_realizations", type=int, default=20)
     parser.add_argument("--checkpoint", type=str, default=None)
+    parser.add_argument(
+        "--embeddings_dir", type=str, default=str(resolve_embeddings_dir(None)),
+        help="Embedding export directory used for metadata and station artifacts.",
+    )
     parser.add_argument("--ae_checkpoint", type=str, default=None)
+    parser.add_argument(
+        "--waveform_domain",
+        choices=["auto", "instrument_counts", "physical_acceleration"],
+        default="auto",
+        help="Override checkpoint waveform-domain provenance for legacy checkpoints.",
+    )
     parser.add_argument("--steps", type=int, default=1000)
     parser.add_argument("--gl_iters", type=int, default=200)
     parser.add_argument("--batch_size", type=int, default=50)
@@ -382,6 +412,10 @@ def main():
     parser.add_argument("--num_workers", type=int, default=8)
     parser.add_argument("--chunk", type=int, default=512)
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument(
+        "--fraction", type=float, default=1.0,
+        help="Deterministic evenly-spaced fraction of selected real records in (0, 1].",
+    )
     parser.add_argument("--real_cache", type=str, default=None)
     parser.add_argument("--gwm_cache", type=str, default=None)
     parser.add_argument("--min_bin_count", type=int, default=5)

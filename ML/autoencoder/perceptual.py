@@ -5,6 +5,85 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from normalization_contract import WAVEFORM_DOMAINS
+
+
+PHASENET_LEGACY_COUNTS_MODE = "legacy_normalized"
+PHASENET_PHYSICAL_INVERSE_MODE = "physical_global_inverse"
+
+
+def resolve_phasenet_input_mode(
+    waveform_domain: str,
+    global_min: Optional[float] = None,
+    global_max: Optional[float] = None,
+) -> str:
+    """Return the PhaseNet input contract required by a waveform domain."""
+    if waveform_domain not in WAVEFORM_DOMAINS:
+        raise ValueError(
+            f"Unsupported waveform domain {waveform_domain!r}. "
+            f"Expected one of: {', '.join(WAVEFORM_DOMAINS)}."
+        )
+
+    if waveform_domain == "instrument_counts":
+        return PHASENET_LEGACY_COUNTS_MODE
+
+    if global_min is None or global_max is None:
+        raise ValueError(
+            "PhaseNet perceptual loss for waveform_domain='physical_acceleration' "
+            "requires exact global-normalization bounds. Enable "
+            "--global_normalization so the bounds are fitted and checkpointed."
+        )
+
+    global_min = float(global_min)
+    global_max = float(global_max)
+    if not math.isfinite(global_min) or not math.isfinite(global_max):
+        raise ValueError("Physical PhaseNet inversion requires finite global normalization bounds.")
+    if global_max <= global_min:
+        raise ValueError(
+            "Physical PhaseNet inversion requires global_max > global_min, "
+            f"got {global_max} <= {global_min}."
+        )
+    return PHASENET_PHYSICAL_INVERSE_MODE
+
+
+def spectrogram_to_linear_magnitude(
+    spectrogram: torch.Tensor,
+    *,
+    input_mode: str,
+    global_min: Optional[float] = None,
+    global_max: Optional[float] = None,
+    amplitude_epsilon: float = 0.0,
+) -> torch.Tensor:
+    """Invert the PhaseNet spectrogram representation without loading PhaseNet."""
+    if not torch.isfinite(spectrogram).all():
+        raise FloatingPointError("PhaseNet perceptual input contains non-finite spectrogram values.")
+
+    if input_mode == PHASENET_LEGACY_COUNTS_MODE:
+        # This is the exact v1 count-domain behavior, including for globally
+        # normalized inputs. Do not denormalize before the historical expm1.
+        return torch.expm1(spectrogram.clamp_min(0.0))
+
+    if input_mode != PHASENET_PHYSICAL_INVERSE_MODE:
+        raise ValueError(f"Unsupported PhaseNet input mode: {input_mode!r}.")
+
+    # resolve_phasenet_input_mode validates these bounds before construction;
+    # keep this guard for direct/helper callers as well.
+    resolve_phasenet_input_mode("physical_acceleration", global_min, global_max)
+    assert global_min is not None and global_max is not None
+    log_magnitude = spectrogram * (global_max - global_min) + global_min
+    max_log = math.log(torch.finfo(log_magnitude.dtype).max)
+    if (log_magnitude > max_log).any():
+        observed_max = log_magnitude.detach().max().item()
+        raise FloatingPointError(
+            "PhaseNet perceptual inversion would overflow: "
+            f"maximum log magnitude is {observed_max:.6g}, but "
+            f"{log_magnitude.dtype} supports at most {max_log:.6g}."
+        )
+    linear_mag = (torch.exp(log_magnitude) - amplitude_epsilon).clamp_min(0.0)
+    if not torch.isfinite(linear_mag).all():
+        raise FloatingPointError("PhaseNet perceptual inversion produced non-finite magnitudes.")
+    return linear_mag
+
 
 class VGGPerceptualLoss(nn.Module):
     """
@@ -104,9 +183,9 @@ class PhaseNetPerceptualLoss(nn.Module):
 
     This module turns spectrograms into proxy waveforms and compares PhaseNet outputs
     between original and reconstructed inputs. The PhaseNet parameters are frozen.
-    When global bounds are supplied, inputs are first mapped back to physical
-    log-magnitude space and inverted with ``exp(log_magnitude) - amplitude_epsilon``.
-    Omitting the bounds retains the legacy per-event ``expm1`` behavior.
+    Count-domain runs always use the legacy v1 ``expm1`` inversion. Physical
+    acceleration runs require global bounds and invert the true log magnitude
+    with ``exp(log_magnitude) - amplitude_epsilon``.
     """
 
     def __init__(
@@ -120,6 +199,7 @@ class PhaseNetPerceptualLoss(nn.Module):
         global_min: Optional[float] = None,
         global_max: Optional[float] = None,
         amplitude_epsilon: float = 0.0,
+        waveform_domain: str = "instrument_counts",
     ):
         super().__init__()
 
@@ -140,23 +220,17 @@ class PhaseNetPerceptualLoss(nn.Module):
         self.nfft = nfft
         self.eps = eps
 
-        if (global_min is None) != (global_max is None):
-            raise ValueError("global_min and global_max must either both be set or both be None.")
-        if global_min is not None:
-            global_min = float(global_min)
-            global_max = float(global_max)
-            if not math.isfinite(global_min) or not math.isfinite(global_max):
-                raise ValueError("global_min and global_max must be finite.")
-            if global_max <= global_min:
-                raise ValueError(
-                    "Global normalization requires global_max > global_min, "
-                    f"got {global_max} <= {global_min}."
-                )
-
         amplitude_epsilon = float(amplitude_epsilon)
         if not math.isfinite(amplitude_epsilon) or amplitude_epsilon < 0.0:
             raise ValueError("amplitude_epsilon must be finite and non-negative.")
 
+        self.waveform_domain = waveform_domain
+        self.input_mode = resolve_phasenet_input_mode(
+            waveform_domain, global_min, global_max
+        )
+        if global_min is not None:
+            global_min = float(global_min)
+            global_max = float(global_max)
         self.global_min = global_min
         self.global_max = global_max
         self.amplitude_epsilon = amplitude_epsilon
@@ -196,34 +270,13 @@ class PhaseNetPerceptualLoss(nn.Module):
         cannot be applied for shape reasons.
         """
         # spectrogram: (B, C, F, T)
-        if not torch.isfinite(spectrogram).all():
-            raise FloatingPointError(
-                "PhaseNet perceptual input contains non-finite spectrogram values."
-            )
-
-        if self.global_min is None:
-            # Legacy/per-event inputs are normalized log1p magnitudes. Preserve the
-            # historical inversion exactly for checkpoints and runs without global
-            # physical-amplitude normalization.
-            linear_mag = torch.expm1(spectrogram.clamp_min(0.0))
-        else:
-            assert self.global_max is not None
-            log_magnitude = (
-                spectrogram * (self.global_max - self.global_min) + self.global_min
-            )
-            max_log = math.log(torch.finfo(log_magnitude.dtype).max)
-            if (log_magnitude > max_log).any():
-                observed_max = log_magnitude.detach().max().item()
-                raise FloatingPointError(
-                    "PhaseNet perceptual inversion would overflow: "
-                    f"maximum log magnitude is {observed_max:.6g}, but "
-                    f"{log_magnitude.dtype} supports at most {max_log:.6g}."
-                )
-            linear_mag = (torch.exp(log_magnitude) - self.amplitude_epsilon).clamp_min(0.0)
-            if not torch.isfinite(linear_mag).all():
-                raise FloatingPointError(
-                    "PhaseNet perceptual inversion produced non-finite magnitudes."
-                )
+        linear_mag = spectrogram_to_linear_magnitude(
+            spectrogram,
+            input_mode=self.input_mode,
+            global_min=self.global_min,
+            global_max=self.global_max,
+            amplitude_epsilon=self.amplitude_epsilon,
+        )
         batch_size, channels, freq_bins, time_bins = linear_mag.shape
 
         expected_freq_bins = self.nfft // 2 + 1

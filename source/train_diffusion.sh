@@ -1,7 +1,1 @@
-python train.py \
-  --prediction_target x0 \
-  --data_mode latent \
-  --log_images_every_n_batches 1000 \
-  --use_vs30 false \
-  --include_station_id true\
-  --experiment_name experiment_name
+train.py --prediction_target x0 --data_mode latent --embeddings_dir embeddings/vae-global-v1 --log_images_every_n_batches 1000 --use_vs30 false --include_station_id true --experiment_name sid-v1 --wandb_project seismic-diffusion --num_epochs 10

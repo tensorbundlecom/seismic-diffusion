@@ -22,16 +22,22 @@ def parse_args():
     base_dir = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(description="Fetch station locations via ObsPy/FDSN")
     parser.add_argument(
+        "--embeddings_dir",
+        type=str,
+        default=str(base_dir / "embeddings"),
+        help="Selected embedding export directory used for default input/output paths.",
+    )
+    parser.add_argument(
         "--metadata",
         type=str,
-        default=str(base_dir / "embeddings" / "metadata.json"),
-        help="Path to embeddings metadata.json",
+        default=None,
+        help="Path to metadata.json (defaults to <embeddings_dir>/metadata.json)",
     )
     parser.add_argument(
         "--output",
         type=str,
-        default=str(base_dir / "embeddings" / "station_locations.json"),
-        help="Output JSON path for station locations",
+        default=None,
+        help="Output path (defaults to <embeddings_dir>/station_locations.json)",
     )
     parser.add_argument(
         "--strict",
@@ -170,8 +176,9 @@ def _query_station(
 
 def main():
     args = parse_args()
-    metadata_path = Path(args.metadata).expanduser().resolve()
-    output_path = Path(args.output).expanduser().resolve()
+    embeddings_dir = Path(args.embeddings_dir).expanduser().resolve()
+    metadata_path = Path(args.metadata).expanduser().resolve() if args.metadata else embeddings_dir / "metadata.json"
+    output_path = Path(args.output).expanduser().resolve() if args.output else embeddings_dir / "station_locations.json"
 
     if not metadata_path.exists():
         raise FileNotFoundError(f"Metadata file not found: {metadata_path}")

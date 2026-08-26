@@ -40,6 +40,7 @@ from ML.diffusion.model import (
 )
 from ML.autoencoder.inference import load_model as _load_ae
 from ML.amplitude.model import AmplitudeMLP
+from ML.diffusion.embedding_paths import resolve_project_path
 from ML.diffusion.reconstruction import decoded_to_magnitude, resolve_reconstruction_spec
 from diffusers import DDPMScheduler
 
@@ -92,16 +93,16 @@ CH_COLS = [BLUE, GREEN, RED]   # E / N / Z
 
 
 # ── Scale helpers (loaded lazily from scale.json) ────────────────────────────
-def _load_scale():
-    path = DIFF / "embeddings" / "scale.json"
+def _load_scale(embeddings_dir: Path | None = None):
+    path = (embeddings_dir or DIFF / "embeddings") / "scale.json"
     if path.exists():
         return json.load(open(path))
     return {}
 
 
-def _load_station_locations():
+def _load_station_locations(embeddings_dir: Path | None = None):
     """Load station coordinates used by diffusion conditioning."""
-    path = DIFF / "embeddings" / "station_locations.json"
+    path = (embeddings_dir or DIFF / "embeddings") / "station_locations.json"
     if not path.exists():
         raise FileNotFoundError(
             "station_locations.json not found.\n"
@@ -110,14 +111,14 @@ def _load_station_locations():
     return json.load(open(path))
 
 
-def _load_station_vs30():
+def _load_station_vs30(embeddings_dir: Path | None = None):
     """
     Load the optional per-station Vs30 lookup (m/s).
 
     Only needed for checkpoints trained with --use_vs30. Returns {} when the file
     is absent so older (non-Vs30) checkpoints keep working unchanged.
     """
-    path = DIFF / "embeddings" / "station_vs30.json"
+    path = (embeddings_dir or DIFF / "embeddings") / "station_vs30.json"
     if not path.exists():
         return {}
     try:
@@ -126,9 +127,9 @@ def _load_station_vs30():
         return {}
 
 
-def _get_embeddings_source_checkpoint():
+def _get_embeddings_source_checkpoint(embeddings_dir: Path | None = None):
     """Return AE checkpoint used to create embeddings, if recorded."""
-    path = DIFF / "embeddings" / "source.json"
+    path = (embeddings_dir or DIFF / "embeddings") / "source.json"
     if not path.exists():
         return None
     try:
@@ -138,20 +139,28 @@ def _get_embeddings_source_checkpoint():
     ckpt = source.get("ae_checkpoint")
     if not ckpt:
         return None
-    ckpt_path = Path(ckpt)
-    if not ckpt_path.is_absolute():
-        ckpt_path = (DIFF / ckpt_path).resolve()
-    return ckpt_path if ckpt_path.exists() else None
+    try:
+        return resolve_project_path(
+            ckpt,
+            ae_name=source.get("ae_name"),
+            require_exists=True,
+        )
+    except FileNotFoundError:
+        return None
 
 
-def _checkpoint_path(value):
+def _checkpoint_path(value, ae_name=None):
     """Resolve an AE checkpoint recorded in a diffusion provenance snapshot."""
     if not value:
         return None
-    path = Path(value)
-    if not path.is_absolute():
-        path = (DIFF / path).resolve()
-    return path if path.exists() else None
+    try:
+        return resolve_project_path(
+            value,
+            ae_name=ae_name,
+            require_exists=True,
+        )
+    except FileNotFoundError:
+        return None
 
 
 def _provenance_candidates(training_config: dict):
@@ -170,11 +179,112 @@ def _provenance_candidates(training_config: dict):
     return candidates
 
 
-def _resolve_diffusion_normalization(training_config: dict) -> dict:
+def _resolve_embedding_export_dir(training_config: dict) -> Path:
+    """Find the immutable embedding export bound to a diffusion checkpoint.
+
+    New checkpoints record a repository-relative ``embedding_provenance`` path.
+    Older checkpoints may contain an absolute path from another checkout, or
+    only the legacy top-level value.  Resolve both forms without ever falling
+    back from an explicitly recorded export to whichever ``embeddings`` folder
+    happens to be current.
+    """
+    recorded = None
+    for source in _provenance_candidates(training_config):
+        value = source.get("embeddings_dir")
+        if value:
+            recorded = value
+            break
+        source_path = source.get("source_path")
+        if source_path:
+            recorded = str(Path(source_path).parent)
+            break
+
+    # Checkpoints made before export provenance existed used the shared
+    # directory.  This is intentionally the only case that uses that fallback.
+    if not recorded:
+        return (DIFF / "embeddings").resolve()
+
+    raw = Path(recorded).expanduser()
+    candidates = []
+    if raw.is_absolute():
+        candidates.append(raw)
+        parts = raw.parts
+        if "ML" in parts:
+            candidates.append(ROOT.joinpath(*parts[parts.index("ML"):]))
+    else:
+        # Current provenance is rooted at the repository.  The DIFF-relative
+        # candidate supports a brief historical format such as
+        # ``embeddings/vae-global-v1``.
+        candidates.extend((ROOT / raw, DIFF / raw))
+
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate.resolve()
+    tried = "\n  - ".join(str(candidate) for candidate in candidates)
+    raise FileNotFoundError(
+        "Could not resolve the embedding export recorded by this diffusion checkpoint "
+        f"as {str(recorded)!r}. Tried:\n  - {tried}"
+    )
+
+
+def _checkpoint_waveform_domain(training_config: dict) -> str | None:
+    """Return the checkpoint's declared waveform domain, when available."""
+    for source in _provenance_candidates(training_config):
+        value = source.get("waveform_domain")
+        if value:
+            return str(value)
+    return None
+
+
+def _load_embedding_artifacts(training_config: dict) -> dict:
+    """Load and validate all reference artifacts for one diffusion checkpoint.
+
+    The entire bundle is constructed before callers mutate GUI state, preventing
+    an invalid export from leaving a newly selected model paired with old
+    reference data.
+    """
+    embeddings_dir = _resolve_embedding_export_dir(training_config)
+    source_path = embeddings_dir / "source.json"
+    source = json.load(open(source_path)) if source_path.exists() else {}
+    checkpoint_domain = _checkpoint_waveform_domain(training_config)
+    source_domain = source.get("waveform_domain")
+    if checkpoint_domain and source_domain and checkpoint_domain != source_domain:
+        raise ValueError(
+            "Embedding export waveform domain does not match checkpoint provenance: "
+            f"checkpoint={checkpoint_domain!r}, export={source_domain!r}."
+        )
+
+    metadata_path = embeddings_dir / "metadata.json"
+    if not metadata_path.exists():
+        raise FileNotFoundError(
+            f"Missing reference metadata for selected embedding export: {metadata_path}"
+        )
+    metadata = json.load(open(metadata_path))
+    if not isinstance(metadata, list):
+        raise ValueError(f"Embedding metadata must be a list: {metadata_path}")
+
+    # Load each required file before returning the bundle.  Vs30 remains
+    # optional because non-Vs30 models should work with exports that predate it.
+    station_locations = _load_station_locations(embeddings_dir)
+    station_vs30 = _load_station_vs30(embeddings_dir)
+    return {
+        "dir": embeddings_dir,
+        "source": source,
+        "scale": _load_scale(embeddings_dir),
+        "metadata": metadata,
+        "station_locations": station_locations,
+        "station_vs30": station_vs30,
+        "waveform_domain": source_domain or checkpoint_domain,
+    }
+
+
+def _resolve_diffusion_normalization(
+    training_config: dict, embeddings_dir: Path | None = None,
+) -> dict:
     """Resolve checkpoint-bound reconstruction metadata through the shared contract."""
     spec = resolve_reconstruction_spec(
         training_config,
-        embeddings_source_path=DIFF / "embeddings" / "source.json",
+        embeddings_source_path=(embeddings_dir or DIFF / "embeddings") / "source.json",
     )
     return {
         "mode": spec.mode,
@@ -189,7 +299,10 @@ def _resolve_diffusion_normalization(training_config: dict) -> dict:
 def _get_checkpoint_bound_ae_checkpoint(training_config: dict):
     """Return the AE checkpoint recorded with this diffusion checkpoint, if any."""
     for source in _provenance_candidates(training_config):
-        path = _checkpoint_path(source.get("ae_checkpoint"))
+        path = _checkpoint_path(
+            source.get("ae_checkpoint"),
+            ae_name=source.get("ae_name"),
+        )
         if path is not None:
             return path
     return None
@@ -429,6 +542,39 @@ def _list_diffusion_checkpoints():
     return items
 
 
+def _autoencoder_label(checkpoint: Path) -> str:
+    """Return a stable, compact label for an AE best-model checkpoint."""
+    try:
+        return str(checkpoint.parent.relative_to(AE / "checkpoints"))
+    except ValueError:
+        return checkpoint.parent.name
+
+
+def _list_autoencoder_diffusion_pairs():
+    """List provenance-compatible AEs and their diffusion checkpoints.
+
+    A diffusion model learns one specific AE latent space. Equal latent tensor
+    shapes are not sufficient compatibility, so the demo only offers AEs that
+    are explicitly bound by a diffusion checkpoint's saved provenance.
+    """
+    ae_choices = {}
+    diffusion_choices = {}
+    for _, diff_ckpt in _list_diffusion_checkpoints():
+        training_config = _read_diffusion_training_config(diff_ckpt)
+        if str(training_config.get("data_mode", "latent")).lower() != "latent":
+            continue
+        ae_ckpt = _get_checkpoint_bound_ae_checkpoint(training_config)
+        if ae_ckpt is None:
+            continue
+        ae_ckpt = ae_ckpt.resolve()
+        label = _autoencoder_label(ae_ckpt)
+        if label in ae_choices and ae_choices[label] != ae_ckpt:
+            label = str(ae_ckpt.parent)
+        ae_choices[label] = ae_ckpt
+        diffusion_choices.setdefault(ae_ckpt, []).append(diff_ckpt)
+    return ae_choices, diffusion_choices
+
+
 def _find_compatible_diffusion_checkpoint(latent_channels: int):
     """
     Pick latest diffusion checkpoint whose in/out channels match AE latent size.
@@ -446,9 +592,9 @@ def _find_compatible_diffusion_checkpoint(latent_channels: int):
     return None, None
 
 
-def _get_embeddings_source_stft_config():
+def _get_embeddings_source_stft_config(embeddings_dir: Path | None = None):
     """Return source STFT params recorded during embedding creation, if available."""
-    path = DIFF / "embeddings" / "source.json"
+    path = (embeddings_dir or DIFF / "embeddings") / "source.json"
     defaults = {"nperseg": NPERSEG, "noverlap": NOVERLAP, "nfft": NFFT}
     if not path.exists():
         return defaults
@@ -836,6 +982,9 @@ class SeismicDemoApp(tk.Tk):
         self._station_locations = {}
         self._station_vs30      = {}   # per-station Vs30 (m/s); only used by Vs30 checkpoints
         self._train_metadatas   = []
+        self._embeddings_dir    = DIFF / "embeddings"
+        self._embedding_source  = {}
+        self._waveform_domain   = None
         self._val_indices       = []   # held-out (test) indices into _train_metadatas, from scale.json
         self._amp_model      = None
         self._amp_stats      = None
@@ -854,6 +1003,8 @@ class SeismicDemoApp(tk.Tk):
         self._diff_ckpt_path = None
         self._ae_ckpt_path = None
         self._diff_ckpt_choices = {}   # label -> checkpoint Path
+        self._ae_ckpt_choices = {}     # label -> AE checkpoint Path
+        self._ae_diff_choices = {}     # AE checkpoint Path -> compatible diffusion dirs
 
         self._apply_theme()
         self._build_ui()
@@ -962,6 +1113,22 @@ class SeismicDemoApp(tk.Tk):
         # that sync the dropdown to the loaded checkpoint don't trigger a reload.
         self._diff_model_cb.bind(
             "<<ComboboxSelected>>", lambda _e: self._on_diffusion_model_changed()
+        )
+
+        # Autoencoder selector. Choosing an AE switches to a diffusion checkpoint
+        # whose provenance was created from that exact latent space.
+        ttk.Label(ctrl, text="Autoencoder").pack(anchor="w")
+        self._ae_model_var = tk.StringVar(value="")
+        self._ae_model_cb = ttk.Combobox(
+            ctrl,
+            textvariable=self._ae_model_var,
+            values=[],
+            state="disabled",
+            width=16,
+        )
+        self._ae_model_cb.pack(fill="x", pady=(2, 12))
+        self._ae_model_cb.bind(
+            "<<ComboboxSelected>>", lambda _e: self._on_autoencoder_model_changed()
         )
 
         # Station dropdown
@@ -1393,25 +1560,29 @@ class SeismicDemoApp(tk.Tk):
         for sp in ax.spines.values():
             sp.set_edgecolor(SUBTEXT)
 
+    def _commit_embedding_artifacts(self, artifacts: dict):
+        """Atomically publish the already-validated export reference bundle."""
+        self._embeddings_dir = artifacts["dir"]
+        self._embedding_source = artifacts["source"]
+        self._station_locations = artifacts["station_locations"]
+        self._station_vs30 = artifacts["station_vs30"]
+        self._train_metadatas = artifacts["metadata"]
+        self._waveform_domain = artifacts["waveform_domain"]
+        print(f"[demo] Reference embedding export: {self._rel_to_root(self._embeddings_dir)}")
+        print(f"[demo] Loaded {len(self._train_metadatas):,} training metadata entries")
+        if self._station_vs30:
+            print(f"[demo] Loaded Vs30 for {len(self._station_vs30)} stations")
+        else:
+            print("[demo] No station_vs30.json; Vs30-conditioned checkpoints unavailable")
+
     # ── Model loading ─────────────────────────────────────────────────────────
     def _load_models(self):
         try:
-            scale = _load_scale()
+            scale = {}
             self._emb_std        = float(scale.get("emb_std", 1.0))
             self._emb_mean       = float(scale.get("emb_mean", 0.0))
             self._data_mode      = str(scale.get("data_mode", "latent")).lower()
             self._normalise_cond = _make_normalise_cond(scale)
-            self._station_locations = _load_station_locations()
-            self._station_vs30 = _load_station_vs30()
-            if self._station_vs30:
-                print(f"[demo] Loaded Vs30 for {len(self._station_vs30)} stations")
-            else:
-                print("[demo] No station_vs30.json; Vs30-conditioned checkpoints unavailable")
-
-            meta_path = DIFF / "embeddings" / "metadata.json"
-            if meta_path.exists():
-                self._train_metadatas = json.load(open(meta_path))
-                print(f"[demo] Loaded {len(self._train_metadatas):,} training metadata entries")
 
             # ── Diffusion model (latest checkpoint) ──────────────────────────
             diff_ckpt, diff_cfg = _find_latest_diffusion_checkpoint()
@@ -1433,6 +1604,8 @@ class SeismicDemoApp(tk.Tk):
             self._scheduler = _load_diffusion_scheduler(diff_ckpt)
 
             train_cfg = _read_diffusion_training_config(diff_ckpt)
+            artifacts = _load_embedding_artifacts(train_cfg)
+            self._commit_embedding_artifacts(artifacts)
             self._station_name_to_idx = _checkpoint_station_mapping(train_cfg)
             self._station_names = [
                 name for name, _ in sorted(
@@ -1454,7 +1627,7 @@ class SeismicDemoApp(tk.Tk):
                     self._update_station_map()
                 self.after(0, _update_station_choices)
 
-            scale = _checkpoint_scale(train_cfg, scale)
+            scale = _checkpoint_scale(train_cfg, artifacts["scale"])
             self._emb_std = float(scale.get("emb_std", 1.0))
             self._emb_mean = float(scale.get("emb_mean", 0.0))
             self._normalise_cond = _make_normalise_cond(scale)
@@ -1466,7 +1639,9 @@ class SeismicDemoApp(tk.Tk):
 
             self._data_mode     = str(train_cfg.get("data_mode", self._data_mode)).lower()
             self._training_type = str(train_cfg.get("training_type", self._training_type)).lower()
-            self._normalization = _resolve_diffusion_normalization(train_cfg)
+            self._normalization = _resolve_diffusion_normalization(
+                train_cfg, artifacts["dir"],
+            )
             if self._data_mode not in {"latent", "stft"}:
                 self._data_mode = "latent"
             if self._training_type not in {"ddpm", "flow_matching"}:
@@ -1483,7 +1658,7 @@ class SeismicDemoApp(tk.Tk):
             if self._data_mode == "latent":
                 ae_ckpt = (
                     _get_checkpoint_bound_ae_checkpoint(train_cfg)
-                    or _get_embeddings_source_checkpoint()
+                    or _get_embeddings_source_checkpoint(artifacts["dir"])
                     or _find_latest_timestamped_ae_checkpoint()
                 )
                 if ae_ckpt is None:
@@ -1513,7 +1688,7 @@ class SeismicDemoApp(tk.Tk):
                 if "data_shape" in train_cfg:
                     self._emb_shape = tuple(int(v) for v in train_cfg["data_shape"])
                 else:
-                    emb_path = DIFF / "embeddings" / "embeddings.pt"
+                    emb_path = artifacts["dir"] / "embeddings.pt"
                     if emb_path.exists():
                         emb = torch.load(emb_path, map_location="cpu")
                         self._emb_shape = tuple(emb.shape[1:])
@@ -1528,7 +1703,7 @@ class SeismicDemoApp(tk.Tk):
             else:
                 self._ae_model = None
                 self._ae_ckpt_path = None
-                stft_cfg = _get_embeddings_source_stft_config()
+                stft_cfg = _get_embeddings_source_stft_config(artifacts["dir"])
                 _apply_ae_stft_config(stft_cfg)
                 print(
                     "[demo] Using STFT-mode diffusion data shape + source STFT params: "
@@ -1569,6 +1744,7 @@ class SeismicDemoApp(tk.Tk):
                 print(f"[demo] Loaded AE checkpoint: {self._rel_to_root(self._ae_ckpt_path)}")
             self._set_model_info(self._diff_ckpt_path, self._ae_ckpt_path)
             self._refresh_diffusion_model_list()
+            self._refresh_autoencoder_model_list()
             self._set_status("Models ready ✓", GREEN)
             self.after(0, lambda: self._gen_btn.config(state="normal"))
             self.after(0, lambda: self._rand_btn.config(state="normal"))
@@ -1636,12 +1812,37 @@ class SeismicDemoApp(tk.Tk):
                   edgecolor=OVERLAY, labelcolor=TEXT)
         canvas.draw()
 
+    def _resolve_reference_waveform_path(self, file_path: str) -> Path:
+        """Resolve a waveform path from the metadata of the active export."""
+        raw = Path(file_path).expanduser()
+        candidates = [raw] if raw.is_absolute() else [DIFF / raw, self._embeddings_dir / raw]
+
+        # Leave room for future exports that record a data-root explicitly. The
+        # present metadata is DIFF-relative (``../../data/...``), hence DIFF is
+        # deliberately first so existing exports remain portable.
+        for key in ("waveform_root", "dataset_root"):
+            root = self._embedding_source.get(key)
+            if root and not raw.is_absolute():
+                root_path = Path(root).expanduser()
+                candidates.append(root_path / raw)
+                if not root_path.is_absolute():
+                    candidates.append(ROOT / root_path / raw)
+
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate.resolve()
+        tried = "\n  - ".join(str(candidate) for candidate in candidates)
+        raise FileNotFoundError(
+            f"Reference waveform from {self._embeddings_dir.name} was not found: "
+            f"{file_path!r}. Tried:\n  - {tried}"
+        )
+
     def _load_reference_data(self, file_path: str):
         """Returns (spec (3,F,T), waves (3,N), sampling_rate)."""
         from obspy import read as obspy_read
         from scipy import signal as sp_signal
 
-        path = (DIFF / file_path).resolve()
+        path = self._resolve_reference_waveform_path(file_path)
         stream = obspy_read(str(path))
         stream.sort(keys=["channel"])
 
@@ -1736,7 +1937,8 @@ class SeismicDemoApp(tk.Tk):
 
         try:
             spec, waves, sr = self._load_reference_data(m["file_path"])
-            title = (f"M{m['magnitude']:.1f}  {m.get('location_name', '')}  "
+            title = (f"[{self._waveform_domain or 'unknown domain'}] "
+                     f"M{m['magnitude']:.1f}  {m.get('location_name', '')}  "
                      f"station={station}  SNR={m.get('snr', 0):.1f}")
             self._draw_reference_stft(spec, title)
             self._draw_fourier_spectrum(self._ref_fft_ax, self._ref_fft_canvas, spec, sr)
@@ -1804,6 +2006,74 @@ class SeismicDemoApp(tk.Tk):
             daemon=True,
         ).start()
 
+    def _refresh_autoencoder_model_list(self):
+        """Populate AEs that have at least one provenance-compatible diffusion model."""
+        ae_choices, diffusion_choices = _list_autoencoder_diffusion_pairs()
+        current_ae = self._ae_ckpt_path.resolve() if self._ae_ckpt_path is not None else None
+        if current_ae is not None and current_ae not in ae_choices.values():
+            label = _autoencoder_label(current_ae)
+            ae_choices[label] = current_ae
+            if self._diff_ckpt_path is not None:
+                diffusion_choices[current_ae] = [self._diff_ckpt_path]
+        self._ae_ckpt_choices = ae_choices
+        self._ae_diff_choices = diffusion_choices
+        labels = list(ae_choices.keys())
+
+        def _apply():
+            enabled = self._data_mode == "latent" and bool(labels)
+            self._ae_model_cb.configure(
+                values=labels,
+                state="readonly" if enabled else "disabled",
+            )
+            self._sync_autoencoder_model_selection()
+
+        self.after(0, _apply)
+
+    def _sync_autoencoder_model_selection(self):
+        """Point the AE dropdown at the decoder bound to the loaded diffusion model."""
+        current = self._ae_ckpt_path.resolve() if self._ae_ckpt_path is not None else None
+        label = next(
+            (name for name, path in self._ae_ckpt_choices.items() if path == current),
+            "",
+        )
+        self.after(0, lambda value=label: self._ae_model_var.set(value))
+
+    def _on_autoencoder_model_changed(self):
+        """Switch to the newest diffusion pipeline trained with the selected AE."""
+        label = self._ae_model_var.get()
+        ae_ckpt = self._ae_ckpt_choices.get(label)
+        current_ae = self._ae_ckpt_path.resolve() if self._ae_ckpt_path is not None else None
+        if ae_ckpt is None or ae_ckpt == current_ae:
+            return
+
+        candidates = self._ae_diff_choices.get(ae_ckpt, [])
+        if not candidates:
+            self._set_status(
+                f"No diffusion checkpoint is provenance-compatible with AE '{label}'.",
+                RED,
+            )
+            self._sync_autoencoder_model_selection()
+            return
+
+        same_type = [
+            path for path in candidates
+            if str(_read_diffusion_training_config(path).get("training_type", "ddpm")).lower()
+            == self._training_type
+        ]
+        diff_ckpt = (same_type or candidates)[0]
+        self._set_status(
+            f"Loading AE {label} with compatible diffusion {diff_ckpt.name}…",
+            YELLOW,
+        )
+        self.after(0, lambda: self._gen_btn.config(state="disabled"))
+        self.after(0, lambda: self._rand_btn.config(state="disabled"))
+        self.after(0, lambda: self._test_btn.config(state="disabled"))
+        threading.Thread(
+            target=self._load_diffusion_checkpoint,
+            args=(diff_ckpt,),
+            daemon=True,
+        ).start()
+
     def _reload_diffusion_model(self, training_type: str):
         diff_ckpt, _ = _find_latest_checkpoint_by_type(training_type)
         if diff_ckpt is None:
@@ -1823,6 +2093,17 @@ class SeismicDemoApp(tk.Tk):
 
     def _load_diffusion_checkpoint(self, diff_ckpt: Path):
         """Load a specific diffusion checkpoint dir into the live model state."""
+        # Selection happens on a worker thread.  Keep the old pipeline intact
+        # until the replacement (including its export artifacts) is known-good.
+        state_fields = (
+            "_diff_ckpt_path", "_diff_unet", "_scheduler", "_emb_std", "_emb_mean",
+            "_normalise_cond", "_val_indices", "_station_name_to_idx", "_station_names",
+            "_normalization", "_training_type", "_data_mode", "_emb_shape", "_ae_model",
+            "_ae_ckpt_path", "_amp_model", "_amp_stats", "_embeddings_dir",
+            "_embedding_source", "_station_locations", "_station_vs30",
+            "_train_metadatas", "_waveform_domain",
+        )
+        previous_state = {field: getattr(self, field) for field in state_fields}
         try:
             self._diff_ckpt_path = diff_ckpt
             self._set_status(f"Loading {diff_ckpt.name}…", YELLOW)
@@ -1835,7 +2116,11 @@ class SeismicDemoApp(tk.Tk):
             self._scheduler = _load_diffusion_scheduler(diff_ckpt)
 
             train_cfg = _read_diffusion_training_config(diff_ckpt)
-            scale = _checkpoint_scale(train_cfg, _load_scale())
+            # Stage the full export bundle first.  Do not publish it until all
+            # model/AE compatibility checks have succeeded below.
+            artifacts = _load_embedding_artifacts(train_cfg)
+            station_locations = artifacts["station_locations"]
+            scale = _checkpoint_scale(train_cfg, artifacts["scale"])
             self._emb_std = float(scale.get("emb_std", 1.0))
             self._emb_mean = float(scale.get("emb_mean", 0.0))
             self._normalise_cond = _make_normalise_cond(scale)
@@ -1846,16 +2131,11 @@ class SeismicDemoApp(tk.Tk):
                     self._station_name_to_idx.items(), key=lambda item: item[1]
                 )
             ]
-            available_stations = [s for s in self._station_names if s in self._station_locations]
-            if available_stations:
-                def _update_station_choices():
-                    self._station_cb.configure(values=available_stations)
-                    if self._station_var.get() not in available_stations:
-                        self._station_var.set(available_stations[0])
-                    self._update_station_map()
-                self.after(0, _update_station_choices)
+            available_stations = [s for s in self._station_names if s in station_locations]
 
-            self._normalization = _resolve_diffusion_normalization(train_cfg)
+            self._normalization = _resolve_diffusion_normalization(
+                train_cfg, artifacts["dir"],
+            )
             new_training_type = str(train_cfg.get("training_type", self._training_type)).lower()
             if new_training_type not in {"ddpm", "flow_matching"}:
                 new_training_type = self._training_type
@@ -1873,7 +2153,7 @@ class SeismicDemoApp(tk.Tk):
             if new_data_mode == "latent":
                 ae_ckpt = (
                     _get_checkpoint_bound_ae_checkpoint(train_cfg)
-                    or _get_embeddings_source_checkpoint()
+                    or _get_embeddings_source_checkpoint(artifacts["dir"])
                     or _find_latest_timestamped_ae_checkpoint()
                 )
                 if ae_ckpt is None:
@@ -1882,15 +2162,25 @@ class SeismicDemoApp(tk.Tk):
                         "Train it first with ML/autoencoder/train.py"
                     )
                 if self._ae_model is None or self._ae_ckpt_path != ae_ckpt:
-                    self._ae_ckpt_path = ae_ckpt
                     self._set_status(f"Loading AE ({ae_ckpt.parent.name})…", YELLOW)
-                    self._ae_model, ae_config = _load_ae(str(ae_ckpt), device=DEVICE)
-                    self._ae_model.eval()
+                    ae_model, ae_config = _load_ae(str(ae_ckpt), device=DEVICE)
+                    ae_model.eval()
+                    latent_channels = int(getattr(ae_model, "latent_channels", -1))
+                    if self._emb_shape is not None and latent_channels != self._emb_shape[0]:
+                        raise ValueError(
+                            f"Diffusion expects C={self._emb_shape[0]} latent channels, "
+                            f"but AE '{ae_ckpt.parent.name}' has C={latent_channels}."
+                        )
+                    self._ae_model = ae_model
+                    self._ae_ckpt_path = ae_ckpt
                     _apply_ae_stft_config(ae_config)
                     self.after(0, self._sync_griffin_lim_defaults_from_stft)
             elif new_data_mode == "stft":
                 self._ae_model = None
                 self._ae_ckpt_path = None
+                stft_cfg = _get_embeddings_source_stft_config(artifacts["dir"])
+                _apply_ae_stft_config(stft_cfg)
+                self.after(0, self._sync_griffin_lim_defaults_from_stft)
 
             self._data_mode = new_data_mode
             if self._normalization["mode"] == "global":
@@ -1898,6 +2188,14 @@ class SeismicDemoApp(tk.Tk):
                 print("[demo] Global AE normalization: amplitude MLP is bypassed.")
             else:
                 self._amp_model, self._amp_stats = _load_amplitude_model(device=DEVICE)
+            self._commit_embedding_artifacts(artifacts)
+            if available_stations:
+                def _update_station_choices():
+                    self._station_cb.configure(values=available_stations)
+                    if self._station_var.get() not in available_stations:
+                        self._station_var.set(available_stations[0])
+                    self._update_station_map()
+                self.after(0, _update_station_choices)
             self.after(0, self._sync_normalization_controls)
             print(f"[demo] Switched to {self._training_type} model: {diff_ckpt.name}")
             self._set_model_info(self._diff_ckpt_path, self._ae_ckpt_path)
@@ -1906,10 +2204,15 @@ class SeismicDemoApp(tk.Tk):
             _display = "Flow Matching" if self._training_type == "flow_matching" else "DDPM"
             self.after(0, lambda d=_display: self._model_type_var.set(d))
             self._sync_diffusion_model_selection()
+            self._refresh_autoencoder_model_list()
             self._set_status(f"Model loaded ✓  ({diff_ckpt.name})", GREEN)
         except Exception as exc:
             import traceback
             traceback.print_exc()
+            for field, value in previous_state.items():
+                setattr(self, field, value)
+            self._sync_diffusion_model_selection()
+            self._sync_autoencoder_model_selection()
             self._set_status(f"Load error:\n{exc}", RED)
         finally:
             self.after(0, lambda: self._gen_btn.config(state="normal"))

@@ -6,8 +6,10 @@ import argparse
 import json
 import math
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
+from uuid import uuid4
 
 import pandas as pd
 import torch
@@ -18,6 +20,9 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 from ML.autoencoder.inference import load_model
 from ML.autoencoder.stft_dataset_with_metadata import SeismicSTFTDatasetWithMetadata
+from ML.diffusion.best_validation import replace_checkpoint_directory
+from ML.diffusion.embedding_paths import named_embedding_dir, project_relative_path
+from ML.diffusion.waveform_domain import resolve_waveform_domain
 
 
 def _find_latest_timestamped_ae_checkpoint() -> Path:
@@ -59,6 +64,15 @@ def parse_args():
         help="Path to filtered waveform directory",
     )
     parser.add_argument(
+        "--waveform_domain",
+        choices=["instrument_counts", "physical_acceleration"],
+        default=None,
+        help=(
+            "Input waveform domain. Defaults to the AE checkpoint value; legacy "
+            "checkpoints default to instrument_counts."
+        ),
+    )
+    parser.add_argument(
         "--event_file",
         type=str,
         default="../../data/events/20140101_20251101_0.0_9.0_9_339.txt",
@@ -78,7 +92,15 @@ def parse_args():
         "--output_dir",
         type=str,
         default=str(default_output),
-        help="Directory where embeddings.pt / metadata.json / source.json are saved",
+        help=(
+            "Embedding export root. Artifacts are saved below an AE-specific "
+            "subdirectory: <output_dir>/<AE checkpoint parent name>/"
+        ),
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace core artifacts for this same AE name if they already exist.",
     )
     parser.add_argument(
         "--waveform_summary",
@@ -255,11 +277,28 @@ def main():
     if not ae_ckpt.exists():
         raise FileNotFoundError(f"AE checkpoint does not exist: {ae_ckpt}")
 
+    ae_name = ae_ckpt.parent.name
+    out_dir = named_embedding_dir(args.output_dir, ae_ckpt).resolve()
+    if out_dir.exists() and not out_dir.is_dir():
+        raise NotADirectoryError(f"Embedding export path is not a directory: {out_dir}")
+    existing_artifacts = [
+        out_dir / filename for filename in ("embeddings.pt", "metadata.json", "source.json")
+        if (out_dir / filename).exists()
+    ]
+    if existing_artifacts and not args.overwrite:
+        raise FileExistsError(
+            f"Embedding export already exists for AE {ae_name!r} at {out_dir}. "
+            "Use --overwrite to replace this AE's core export artifacts."
+        )
+
     print(f"Loading AE checkpoint: {ae_ckpt}")
     model, config = load_model(str(ae_ckpt), device=str(device))
     model.eval()
 
     normalization, _ = _normalization_from_checkpoint(ae_ckpt, config)
+    waveform_domain = resolve_waveform_domain(
+        config.get("waveform_domain"), args.waveform_domain
+    )
     preprocessing = _resolve_preprocessing(args, config)
     nperseg = preprocessing["nperseg"]
     noverlap = preprocessing["noverlap"]
@@ -282,6 +321,7 @@ def main():
         "Using AE log-magnitude transform: "
         f"log(magnitude + {normalization['amplitude_epsilon']:.6g})"
     )
+    print(f"Using waveform domain: {waveform_domain}")
 
     dataset = SeismicSTFTDatasetWithMetadata(
         data_dir=args.data_dir,
@@ -333,16 +373,13 @@ def main():
     if not embeddings:
         raise RuntimeError("No embeddings were created. Check data paths/channels.")
 
-    out_dir = Path(args.output_dir).expanduser().resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
-
     embeddings_tensor = torch.stack(embeddings)
-    torch.save(embeddings_tensor, out_dir / "embeddings.pt")
-    with open(out_dir / "metadata.json", "w") as f:
-        json.dump(metadatas, f, indent=4)
-
     source_payload = {
-        "ae_checkpoint": str(ae_ckpt),
+        "ae_name": ae_name,
+        # Keep exports movable between checkouts.  The resolver treats this as
+        # relative to the repository root, rather than to the process CWD.
+        "ae_checkpoint": project_relative_path(ae_ckpt),
+        "waveform_domain": waveform_domain,
         "stft": {
             "nperseg": nperseg,
             "noverlap": noverlap,
@@ -360,8 +397,42 @@ def main():
         "num_embeddings": len(embeddings),
         "embedding_shape": list(embeddings_tensor.shape[1:]),
     }
-    with open(out_dir / "source.json", "w") as f:
-        json.dump(source_payload, f, indent=4)
+
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    staged_dir = out_dir.parent / f".{out_dir.name}.tmp-{uuid4().hex}"
+    staged_dir.mkdir()
+    try:
+        # Station lookup artifacts belong to the complete export but are
+        # prepared separately. Preserve them when explicitly regenerating the
+        # same AE's core embedding artifacts.
+        if out_dir.is_dir():
+            for child in out_dir.iterdir():
+                if child.name in {"embeddings.pt", "metadata.json", "source.json", "scale.json"}:
+                    continue
+                target = staged_dir / child.name
+                if child.is_dir():
+                    shutil.copytree(child, target)
+                else:
+                    shutil.copy2(child, target)
+
+        torch.save(embeddings_tensor, staged_dir / "embeddings.pt")
+        with (staged_dir / "metadata.json").open("w", encoding="utf-8") as handle:
+            json.dump(metadatas, handle, indent=4)
+        with (staged_dir / "source.json").open("w", encoding="utf-8") as handle:
+            json.dump(source_payload, handle, indent=4)
+        if not args.overwrite and any(
+            (out_dir / filename).exists()
+            for filename in ("embeddings.pt", "metadata.json", "source.json")
+        ):
+            raise FileExistsError(
+                f"Embedding export was created concurrently for AE {ae_name!r} at "
+                f"{out_dir}; the staged export was not installed."
+            )
+        replace_checkpoint_directory(staged_dir, out_dir)
+    except BaseException:
+        if staged_dir.exists():
+            shutil.rmtree(staged_dir)
+        raise
 
     print(f"Saved embeddings: {out_dir / 'embeddings.pt'}")
     print(f"Saved metadata:   {out_dir / 'metadata.json'}")

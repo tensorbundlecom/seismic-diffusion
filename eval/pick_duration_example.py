@@ -22,16 +22,22 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import evaluate_peak_amplitudes as peak  # noqa: E402
 from evaluate_peak_amplitudes import (  # noqa: E402
-    CHANNEL_NAMES, DIFF_DIR, FS, INK, MUTED, GRID,
+    CHANNEL_NAMES, DIFF_DIR, INK, MUTED, GRID,
     _crop_pad, _deconvolve, find_synth_cache,
 )
+from embedding_artifacts import artifact_path, resolve_embeddings_dir  # noqa: E402
 from evaluate_shake_duration import (  # noqa: E402
     CAI_DECIMATE, OUT_DIR, REAL_COLOR, arias_curve, d595,
 )
+from ML.diffusion.waveform_domain import (  # noqa: E402
+    INSTRUMENT_COUNTS,
+    normalize_waveform_domain,
+)
 
 
-def real_cai(meta, channel_idx):
+def real_cai(meta, channel_idx, waveform_domain):
     """Real record -> decimated cAI curve, or None on read/response failure."""
     from obspy import read as obspy_read
 
@@ -43,12 +49,12 @@ def real_cai(meta, channel_idx):
             return None
         stream.sort(keys=["channel"])
         trace = stream[channel_idx]
-        if abs(trace.stats.sampling_rate - FS) > 1e-6:
-            trace.resample(FS)
+        if abs(trace.stats.sampling_rate - peak.FS) > 1e-6:
+            trace.resample(peak.FS)
         code = f"{meta.get('channel_type', 'HH')}{CHANNEL_NAMES[channel_idx]}"
         acc = _deconvolve(_crop_pad(trace.data.astype(np.float64)),
                           meta["station_name"], code,
-                          str(meta.get("event_id", "")), "ACC")
+                          str(meta.get("event_id", "")), "ACC", waveform_domain)
         if acc is None:
             return None
         return arias_curve(acc)[::CAI_DECIMATE]
@@ -65,18 +71,31 @@ def main():
     parser.add_argument("--cache", type=str, default=None,
                         help="Synthetic cache defining the test set "
                              "(default: most recent in eval/first_order).")
+    parser.add_argument(
+        "--embeddings_dir",
+        type=str,
+        default=str(resolve_embeddings_dir(None)),
+        help="Embedding export directory used for metadata and station artifacts.",
+    )
     args = parser.parse_args()
+    embeddings_dir = peak.configure_embeddings_dir(args.embeddings_dir)
 
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from obspy.geodetics import gps2dist_azimuth
 
-    metadatas = json.load(open(DIFF_DIR / "embeddings" / "metadata.json"))
-    station_locations = json.load(open(DIFF_DIR / "embeddings" / "station_locations.json"))
+    with artifact_path(embeddings_dir, "metadata.json").open(encoding="utf-8") as handle:
+        metadatas = json.load(handle)
+    with artifact_path(embeddings_dir, "station_locations.json").open(encoding="utf-8") as handle:
+        station_locations = json.load(handle)
     synth_cache = Path(args.cache) if args.cache else find_synth_cache()
     with np.load(synth_cache) as sc:
         indices = sc["indices"].astype(int).tolist()
+        waveform_domain = normalize_waveform_domain(
+            str(sc["waveform_domain"].item())
+            if "waveform_domain" in sc.files else INSTRUMENT_COUNTS
+        )
     channel = synth_cache.stem.rsplit("_ch", 1)[-1].split("_")[0]
     channel_idx = CHANNEL_NAMES.index(channel)
 
@@ -105,14 +124,14 @@ def main():
         r_hyp = float(np.hypot(dist_m / 1000.0, float(meta["depth"])))
         snr = float(meta.get("snr", np.nan))
 
-        cai = real_cai(meta, channel_idx)
+        cai = real_cai(meta, channel_idx, waveform_domain)
         if cai is None or not np.isfinite(cai[-1]) or cai[-1] <= 0:
             dur = np.nan
             ax.text(0.5, 0.5, "failed", ha="center", va="center",
                     transform=ax.transAxes, color=MUTED)
         else:
             dur, t5, t95 = d595(np.repeat(cai, CAI_DECIMATE))  # full-rate times
-            t = np.arange(cai.shape[0]) * CAI_DECIMATE / FS
+            t = np.arange(cai.shape[0]) * CAI_DECIMATE / peak.FS
             ax.semilogy(t, np.maximum(cai, 1e-14), color=REAL_COLOR, lw=1.2)
             for frac, marker in ((0.05, ">"), (0.95, "v")):
                 i = min(int(np.searchsorted(cai, frac * cai[-1])), len(cai) - 1)

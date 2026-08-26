@@ -57,11 +57,28 @@ from evaluate_peak_amplitudes import (  # noqa: E402
     GWM_COLOR, GMM_COLOR, SCATTER_COLOR, INK, MUTED, GRID,
     _crop_pad, _deconvolve, find_synth_cache,
 )
+from embedding_artifacts import (  # noqa: E402
+    artifact_path,
+    deterministic_fraction_subset,
+    deterministic_selection_tag,
+    resolve_embeddings_dir,
+)
+from output_paths import evaluation_output_dir  # noqa: E402
 
-OUT_DIR = ROOT / "eval" / "attenuation"
+OUT_DIR = evaluation_output_dir("attenuation")
 DATA_COLOR = "#008300"  # validated palette slot 4 (green), as in the paper
 DAMPING = 0.05
 EARTH_R = 6371.0
+
+
+def configure_embeddings_dir(path: str | Path | None) -> Path:
+    """Keep this evaluator's sample rate aligned with the selected export."""
+    import evaluate_peak_amplitudes as peaks
+
+    global FS
+    directory = peaks.configure_embeddings_dir(path)
+    FS = peaks.FS
+    return directory
 
 
 # ── Spectral acceleration ─────────────────────────────────────────────────────
@@ -84,8 +101,8 @@ def spectral_accel(acc: np.ndarray, periods) -> list:
 
 # ── Workers ───────────────────────────────────────────────────────────────────
 def _sa_real(args):
-    """Worker: real mseed -> SA(periods) of the deconvolved E acceleration."""
-    path_str, station, channel_type, event_id, channel_idx, periods = args
+    """Worker: real mseed -> SA(periods) of physical E acceleration."""
+    path_str, station, channel_type, event_id, channel_idx, periods, waveform_domain = args
     try:
         from obspy import read as obspy_read
 
@@ -98,7 +115,7 @@ def _sa_real(args):
             trace.resample(FS)
         code = f"{channel_type}{CHANNEL_NAMES[channel_idx]}"
         acc = _deconvolve(_crop_pad(trace.data.astype(np.float64)),
-                          station, code, event_id, "ACC")
+                          station, code, event_id, "ACC", waveform_domain)
         if acc is None:
             return None
         return spectral_accel(acc, periods)
@@ -107,11 +124,11 @@ def _sa_real(args):
 
 
 def _sa_synth(args):
-    """Worker: counts-domain synthetic -> SA(periods)."""
-    wave, station, channel_code, event_id, periods = args
+    """Worker: checkpoint-domain synthetic -> physical-acceleration SA."""
+    wave, station, channel_code, event_id, periods, waveform_domain = args
     try:
         acc = _deconvolve(np.asarray(wave, dtype=np.float64),
-                          station, channel_code, event_id, "ACC")
+                          station, channel_code, event_id, "ACC", waveform_domain)
         if acc is None:
             return None
         return spectral_accel(acc, periods)
@@ -221,9 +238,16 @@ def select_records(metadatas, station_locations, station_vs30, args):
 
 # ── compute stage ─────────────────────────────────────────────────────────────
 def run_compute(args):
-    metadatas = json.load(open(DIFF_DIR / "embeddings" / "metadata.json"))
-    station_locations = json.load(open(DIFF_DIR / "embeddings" / "station_locations.json"))
-    station_vs30 = json.load(open(DIFF_DIR / "embeddings" / "station_vs30.json"))
+    from gwm_sampling import GwmSampler
+
+    embeddings_dir = configure_embeddings_dir(args.embeddings_dir)
+    sampler = GwmSampler(
+        args.checkpoint, args.ae_checkpoint, args.waveform_domain, embeddings_dir
+    )
+    waveform_domain = sampler.waveform_domain
+    metadatas = json.load(open(artifact_path(embeddings_dir, "metadata.json")))
+    station_locations = json.load(open(artifact_path(embeddings_dir, "station_locations.json")))
+    station_vs30 = json.load(open(artifact_path(embeddings_dir, "station_vs30.json")))
     periods = [float(p) for p in args.periods.split(",")]
 
     sta_name, sta_vs30, vs_window, sel, r_hyp_sel, r_epi_sel = select_records(
@@ -236,12 +260,17 @@ def run_compute(args):
     # ── Real pass ────────────────────────────────────────────────────────────
     tag = (f"M{args.mag_lo:g}-{args.mag_hi:g}_vs{vs_window[0]:.0f}-"
            f"{vs_window[1]:.0f}_T{'-'.join(str(p) for p in periods)}")
-    real_path = OUT_DIR / f"att_real_{tag}.npz"
-    sel_lim = sel
-    if args.limit and args.limit < len(sel):
-        picks = np.linspace(0, len(sel) - 1, num=args.limit, dtype=int)
-        sel_lim = [sel[i] for i in picks]
-        r_hyp_sel = r_hyp_sel[picks]
+    sel_lim = deterministic_fraction_subset(sel, args.fraction, args.limit)
+    selected_positions = {value: index for index, value in enumerate(sel)}
+    r_hyp_sel = r_hyp_sel[[selected_positions[value] for value in sel_lim]]
+    print(
+        f"[eval] deterministic real-data sample: {len(sel_lim)}/{len(sel)} "
+        f"records (fraction={args.fraction:g})"
+    )
+    selection_tag = deterministic_selection_tag(sel_lim)
+    real_path = OUT_DIR / (
+        f"att_real_{tag}_domain{waveform_domain}_n{len(sel_lim)}_sel{selection_tag}.npz"
+    )
     n = len(sel_lim)
     real = None
     if real_path.exists():
@@ -253,6 +282,7 @@ def run_compute(args):
     if real is None:
         real = {
             "indices": np.asarray(sel_lim, dtype=np.int64),
+            "waveform_domain": np.asarray(waveform_domain),
             "periods": np.asarray(periods),
             "r_hyp": r_hyp_sel.astype(np.float64),
             "sa": np.full((n, len(periods)), np.nan),
@@ -275,7 +305,8 @@ def run_compute(args):
                     m = metadatas[sel_lim[j]]
                     jobs.append((resolve(m), m["station_name"],
                                  m.get("channel_type", "HH"),
-                                 str(m.get("event_id", "")), 0, periods))
+                                 str(m.get("event_id", "")), 0, periods,
+                                 waveform_domain))
                 for j, out in zip(rows, pool.map(_sa_real, jobs, chunksize=8)):
                     if out is not None:
                         real["sa"][j] = out
@@ -316,8 +347,6 @@ def run_compute(args):
     # Constructing the sampler also resolves the checkpoint-bound AE contract.
     # Its content-addressed tag prevents stale legacy/global reconstructions
     # from sharing an evaluation cache.
-    from gwm_sampling import GwmSampler
-    sampler = GwmSampler(args.checkpoint, args.ae_checkpoint)
     sweep_path = OUT_DIR / (f"att_sweep_{tag}_M{scen_mag:g}_{sta_name}"
                             f"_model{sampler.cache_tag}"
                             f"_n{args.n_realizations}.npz")
@@ -348,7 +377,8 @@ def run_compute(args):
             batch = pairs[start:start + args.batch_size]
             waves = sampler.generate([metas[di] for di, _ in batch], args.steps,
                                      args.gl_iters, args.seed + start, pool)
-            sa_jobs = [(w.astype(np.float64), sta_name, code, "", periods)
+            sa_jobs = [(w.astype(np.float64), sta_name, code, "", periods,
+                        waveform_domain)
                        for w in waves if w is not None]
             keep = [k for k, w in enumerate(waves) if w is not None]
             for k, out in zip(keep, pool.map(_sa_synth, sa_jobs)):
@@ -371,7 +401,8 @@ def run_compute(args):
              sa_synth=sa_synth, gmm_med=gmm_med, gmm_ln_std=gmm_ln_std,
              gmm_name=args.gmm, scen_mag=scen_mag, station=sta_name,
              vs30=sta_vs30, depth=depth, mag_lo=args.mag_lo, mag_hi=args.mag_hi,
-             vs_lo=vs_window[0], vs_hi=vs_window[1])
+             vs_lo=vs_window[0], vs_hi=vs_window[1],
+             waveform_domain=waveform_domain)
     print(f"[eval] sweep cache written: {sweep_path.name}")
     return real_path, sweep_path
 
@@ -507,7 +538,17 @@ def main():
     parser.add_argument("--dist_step", type=float, default=5.0)
     parser.add_argument("--n_realizations", type=int, default=50)
     parser.add_argument("--checkpoint", type=str, default=None)
+    parser.add_argument(
+        "--embeddings_dir", type=str, default=str(resolve_embeddings_dir(None)),
+        help="Embedding export directory used for metadata and station artifacts.",
+    )
     parser.add_argument("--ae_checkpoint", type=str, default=None)
+    parser.add_argument(
+        "--waveform_domain",
+        choices=["auto", "instrument_counts", "physical_acceleration"],
+        default="auto",
+        help="Override checkpoint waveform-domain provenance for legacy checkpoints.",
+    )
     parser.add_argument("--steps", type=int, default=1000)
     parser.add_argument("--gl_iters", type=int, default=200)
     parser.add_argument("--batch_size", type=int, default=50)
@@ -516,6 +557,10 @@ def main():
     parser.add_argument("--chunk", type=int, default=512)
     parser.add_argument("--limit", type=int, default=0,
                         help="Real pass: only N evenly-spaced records (0 = all).")
+    parser.add_argument(
+        "--fraction", type=float, default=1.0,
+        help="Deterministic evenly-spaced fraction of selected real records in (0, 1].",
+    )
     parser.add_argument("--real_cache", type=str, default=None)
     parser.add_argument("--sweep_cache", type=str, default=None)
     parser.add_argument("--bin_km", type=float, default=10.0)

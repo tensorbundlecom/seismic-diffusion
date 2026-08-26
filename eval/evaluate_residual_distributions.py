@@ -39,9 +39,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from evaluate_peak_amplitudes import (  # noqa: E402
-    GMM_REGISTRY, OUT_DIR, VS30_RANGE,
+    GMM_REGISTRY, OUT_DIR as PEAK_OUT_DIR, VS30_RANGE,
     GWM_COLOR, GMM_COLOR, INK, MUTED, GRID,
 )
+from output_paths import evaluation_output_dir  # noqa: E402
+
+OUT_DIR = evaluation_output_dir("residual_distributions", "peak_amplitudes")
 
 REAL_COLOR = "#63615c"
 
@@ -78,9 +81,9 @@ def main():
     if args.peaks_cache:
         path = Path(args.peaks_cache)
     else:
-        caches = sorted(OUT_DIR.glob("peaks_*.npz"), key=lambda p: p.stat().st_mtime)
+        caches = sorted(PEAK_OUT_DIR.glob("peaks_*.npz"), key=lambda p: p.stat().st_mtime)
         if not caches:
-            raise FileNotFoundError(f"No cache in {OUT_DIR}; run "
+            raise FileNotFoundError(f"No cache in {PEAK_OUT_DIR}; run "
                                     "evaluate_peak_amplitudes.py compute first.")
         path = caches[-1]
     cache = dict(np.load(path))
@@ -183,6 +186,7 @@ def main():
 
     out = OUT_DIR / (f"fig_residuals_{path.stem.removeprefix('peaks_')}"
                      f"_{args.gmm}_{args.obs}.png")
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=150, facecolor="white")
     print(f"[eval] figure saved: {out}")
 

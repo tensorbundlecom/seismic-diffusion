@@ -17,7 +17,12 @@ from tqdm import tqdm
 
 from model import VariationalAutoencoder
 from stft_dataset import SeismicSTFTDataset, collate_fn
-from perceptual import PhaseNetPerceptualLoss, VGGPerceptualLoss
+from perceptual import (
+    PhaseNetPerceptualLoss,
+    VGGPerceptualLoss,
+    resolve_phasenet_input_mode,
+)
+from normalization_contract import WAVEFORM_DOMAINS, resolve_amplitude_epsilon
 from normalization_cache import fit_or_load_global_normalization
 
 
@@ -788,6 +793,12 @@ def parse_args():
     # Data arguments
     parser.add_argument('--data_dir', type=str, default='../../data/filtered_waveforms',
                         help='Path to filtered waveforms directory')
+    parser.add_argument(
+        '--waveform_domain',
+        choices=WAVEFORM_DOMAINS,
+        default='instrument_counts',
+        help='Units/domain of input traces; saved in checkpoints for downstream evaluation.',
+    )
     parser.add_argument('--channels', type=str, nargs='+', default=['HH'],
                         help='Channel types to include (e.g., HH HN EH BH)')
     
@@ -815,11 +826,11 @@ def parse_args():
     parser.add_argument(
         '--amplitude_epsilon',
         type=_positive_finite_float,
-        default=1e-12,
+        default=None,
         help=(
-            'Positive magnitude floor used by the invertible log transform '
-            'log(magnitude + epsilon). The default 1e-12 is suitable for physical '
-            'acceleration in m/s^2; it is saved in checkpoints and embedding provenance.'
+            'Positive magnitude floor used by log(magnitude + epsilon). Defaults to '
+            '1.0 for instrument_counts (the legacy log1p contract) and 1e-12 for '
+            'physical_acceleration. The resolved value is saved in checkpoints.'
         ),
     )
 
@@ -890,7 +901,11 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed')
     
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.amplitude_epsilon = resolve_amplitude_epsilon(
+        args.waveform_domain, args.amplitude_epsilon
+    )
+    return args
 
 
 def main():
@@ -909,6 +924,10 @@ def main():
     
     device = torch.device(args.device)
     print(f"Using device: {device}")
+    print(
+        f"Waveform domain: {args.waveform_domain}; "
+        f"amplitude_epsilon={args.amplitude_epsilon:g}."
+    )
     
     # Create dataset
     print(f"Loading dataset from {args.data_dir}...")
@@ -1033,6 +1052,11 @@ def main():
         except Exception as exc:
             print(f"Warning: Could not enable VGG perceptual loss. Falling back to base loss only. Reason: {exc}")
     elif args.use_phasenet_perceptual:
+        # Validate before the optional-dependency guard below, so an invalid
+        # physical contract never quietly falls back to the base loss.
+        phasenet_input_mode = resolve_phasenet_input_mode(
+            args.waveform_domain, global_min, global_max
+        )
         try:
             perceptual_loss_fn = PhaseNetPerceptualLoss(
                 pretrained=args.phasenet_pretrained,
@@ -1042,13 +1066,15 @@ def main():
                 global_min=global_min,
                 global_max=global_max,
                 amplitude_epsilon=args.amplitude_epsilon,
+                waveform_domain=args.waveform_domain,
                 device=str(device),
             )
             perceptual_weight = args.phasenet_weight
             perceptual_type = 'phasenet'
             print(
                 "PhaseNet perceptual loss enabled "
-                f"(pretrained='{args.phasenet_pretrained}', weight={args.phasenet_weight})."
+                f"(pretrained='{args.phasenet_pretrained}', weight={args.phasenet_weight}, "
+                f"input_mode='{phasenet_input_mode}')."
             )
         except Exception as exc:
             print(f"Warning: Could not enable PhaseNet perceptual loss. Falling back to base loss only. Reason: {exc}")
@@ -1063,6 +1089,9 @@ def main():
     config['num_params'] = num_params
     config['perceptual_type'] = perceptual_type
     config['perceptual_active'] = perceptual_loss_fn is not None
+    config['phasenet_input_mode'] = (
+        perceptual_loss_fn.input_mode if perceptual_type == 'phasenet' and perceptual_loss_fn else None
+    )
     
     trainer = Trainer(
         model=model,

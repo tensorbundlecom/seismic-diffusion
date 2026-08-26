@@ -26,3 +26,6 @@ VS30/
 ML/diffusion/wandb/
 .kilo/
 eval/station_response_manifest.json
+eval/runs/ddpm/*
+kilo.json
+*.log

@@ -1,5 +1,7 @@
 # Physical-unit waveform preprocessing
 
+**Last updated:** 2026-08-25
+
 ## TL;DR
 
 This workflow creates a new MiniSEED archive in physical acceleration units (`m/s^2`) from raw digitizer counts before training a globally normalized autoencoder. It selects the same default corpus as the current AE dataset—maximum component SNR strictly greater than 2 and no component gaps (currently 108,421 files)—but does not modify or mix with legacy count-domain archives. A strict, epoch-aware StationXML coverage gate must succeed before correction; QC then emits CSV/JSON summaries and deterministic raw-versus-corrected PNG reviews.
@@ -149,11 +151,12 @@ Only after strict response coverage, zero response-removal failures, and accepta
 cd ML/autoencoder
 python train.py \
   --data_dir ../../data/physical_waveforms_snr2_2-15hz \
-  --global_normalization --amplitude_epsilon 1e-12 \
+  --waveform_domain physical_acceleration \
+  --global_normalization \
   --name vae-global-physical-v2
 ```
 
-The epsilon, fitted bounds, archive manifest, embeddings, and diffusion checkpoint form one provenance chain and must remain associated.
+With `physical_acceleration`, an omitted `--amplitude_epsilon` resolves to `1e-12`; pass an explicit positive value only to intentionally override that default. If this AE uses `--use_phasenet_perceptual`, global normalization is mandatory because PhaseNet receives the exact inverse physical magnitude reconstructed from these fitted bounds. The epsilon, fitted bounds, archive manifest, embeddings, and diffusion checkpoint form one provenance chain and must remain associated.
 
 ## Related docs
 
@@ -161,5 +164,3 @@ The epsilon, fitted bounds, archive manifest, embeddings, and diffusion checkpoi
 - [Project overview](../../README.md)
 - [Glossary](../glossary.md)
 - [Changelog](../changelog.md)
-
-Last updated: 2026-08-22

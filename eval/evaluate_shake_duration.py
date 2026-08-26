@@ -19,8 +19,9 @@ data. Caveat: below M~5.35 its source term saturates, so at this dataset's
 magnitudes it predicts a nearly magnitude-independent, path-dominated
 duration - treat the overlay as a reference line, not a benchmark.
 
-Durations are measured on response-deconvolved acceleration (E component),
-identically for real and synthetic waveforms. All outputs are cached in
+Durations are measured on physical acceleration (E component), identically
+for real and synthetic waveforms. Counts are response-deconvolved; physical
+acceleration is used directly. All outputs are cached in
 eval/shake_duration/ and `compute` is resumable; `plot` only needs the cache.
 
 Run from the project root:
@@ -44,11 +45,27 @@ from evaluate_peak_amplitudes import (  # noqa: E402
     GWM_COLOR, GMM_COLOR, INK, MUTED, GRID,
     _crop_pad, _deconvolve, find_synth_cache,
 )
+from embedding_artifacts import artifact_path, resolve_embeddings_dir  # noqa: E402
+from output_paths import evaluation_output_dir  # noqa: E402
+from ML.diffusion.waveform_domain import (  # noqa: E402
+    INSTRUMENT_COUNTS,
+    normalize_waveform_domain,
+)
 
-OUT_DIR = ROOT / "eval" / "shake_duration"
+OUT_DIR = evaluation_output_dir("shake_duration")
 REAL_COLOR = "#63615c"
 GRAVITY = 9.80665
 CAI_DECIMATE = 10  # stored example-curve resolution: FS/10
+
+
+def configure_embeddings_dir(path: str | Path | None) -> Path:
+    """Keep duration calculations aligned with the selected export geometry."""
+    import evaluate_peak_amplitudes as peaks
+
+    global FS, TARGET_SAMPLES
+    directory = peaks.configure_embeddings_dir(path)
+    FS, TARGET_SAMPLES = peaks.FS, peaks.TARGET_SAMPLES
+    return directory
 
 
 # ── Arias intensity ───────────────────────────────────────────────────────────
@@ -70,7 +87,7 @@ def d595(cai: np.ndarray):
 # ── Workers (panel b) ─────────────────────────────────────────────────────────
 def _duration_real(args):
     """Worker: real mseed -> D5-95 of the deconvolved E-component acceleration."""
-    path_str, station, channel_type, event_id, channel_idx = args
+    path_str, station, channel_type, event_id, channel_idx, waveform_domain = args
     try:
         from obspy import read as obspy_read
 
@@ -83,7 +100,7 @@ def _duration_real(args):
             trace.resample(FS)
         data = _crop_pad(trace.data.astype(np.float64))
         code = f"{channel_type}{CHANNEL_NAMES[channel_idx]}"
-        acc = _deconvolve(data, station, code, event_id, "ACC")
+        acc = _deconvolve(data, station, code, event_id, "ACC", waveform_domain)
         if acc is None:
             return np.nan
         return d595(arias_curve(acc))[0]
@@ -93,10 +110,10 @@ def _duration_real(args):
 
 def _duration_synth(args):
     """Worker: cached counts-domain synthetic -> D5-95."""
-    wave, station, channel_code, event_id = args
+    wave, station, channel_code, event_id, waveform_domain = args
     try:
         acc = _deconvolve(np.asarray(wave, dtype=np.float64),
-                          station, channel_code, event_id, "ACC")
+                          station, channel_code, event_id, "ACC", waveform_domain)
         if acc is None:
             return np.nan
         return d595(arias_curve(acc))[0]
@@ -148,14 +165,19 @@ def save_cache(path: Path, cache: dict):
 def run_compute(args):
     from obspy.geodetics import gps2dist_azimuth
 
-    metadatas = json.load(open(DIFF_DIR / "embeddings" / "metadata.json"))
-    station_locations = json.load(open(DIFF_DIR / "embeddings" / "station_locations.json"))
-    station_vs30 = json.load(open(DIFF_DIR / "embeddings" / "station_vs30.json"))
+    embeddings_dir = configure_embeddings_dir(args.embeddings_dir)
+    metadatas = json.load(open(artifact_path(embeddings_dir, "metadata.json")))
+    station_locations = json.load(open(artifact_path(embeddings_dir, "station_locations.json")))
+    station_vs30 = json.load(open(artifact_path(embeddings_dir, "station_vs30.json")))
 
     synth_cache_path = Path(args.cache) if args.cache else find_synth_cache()
     with np.load(synth_cache_path) as sc:
         synth_indices = sc["indices"].astype(int).tolist()
         wave_synth = sc["wave_synth"]
+        waveform_domain = normalize_waveform_domain(
+            str(sc["waveform_domain"].item())
+            if "waveform_domain" in sc.files else INSTRUMENT_COUNTS
+        )
     channel = synth_cache_path.stem.rsplit("_ch", 1)[-1].split("_")[0]
     channel_idx = CHANNEL_NAMES.index(channel)
     print(f"[eval] synthetics: {synth_cache_path.name} "
@@ -178,6 +200,7 @@ def run_compute(args):
     if cache is None:
         cache = {
             "indices": np.asarray(indices, dtype=np.int64),
+            "waveform_domain": np.asarray(waveform_domain),
             "mag": np.full(n, np.nan), "r_hyp": np.full(n, np.nan),
             "vs30": np.full(n, np.nan),
             "dur_real": np.full(n, np.nan), "dur_synth": np.full(n, np.nan),
@@ -222,7 +245,8 @@ def run_compute(args):
             j: (resolve(metadatas[indices[j]]),
                 metadatas[indices[j]]["station_name"],
                 metadatas[indices[j]].get("channel_type", "HH"),
-                str(metadatas[indices[j]].get("event_id", "")), channel_idx)
+                str(metadatas[indices[j]].get("event_id", "")), channel_idx,
+                waveform_domain)
             for j in todo
         }
         run_pool(todo, jobs, "done_real", "dur_real", _duration_real, "real")
@@ -236,20 +260,20 @@ def run_compute(args):
             m = metadatas[indices[j]]
             jobs[j] = (wave_synth[synth_row[indices[j]]], m["station_name"],
                        f"{m.get('channel_type', 'HH')}{channel}",
-                       str(m.get("event_id", "")))
+                       str(m.get("event_id", "")), waveform_domain)
         run_pool(todo, jobs, "done_synth", "dur_synth", _duration_synth, "synth")
 
     print(f"[eval] cache written: {path}")
 
     if args.n_realizations > 0:
         run_example(args, metadatas, station_locations, synth_cache_path,
-                    indices, channel, channel_idx)
+                    indices, channel, channel_idx, waveform_domain)
     return path
 
 
 # ── Example realizations (panel a) ────────────────────────────────────────────
 def run_example(args, metadatas, station_locations, synth_cache_path,
-                indices, channel, channel_idx):
+                indices, channel, channel_idx, waveform_domain):
     """Generate --n_realizations synthetics for one record's conditioning and
     store the cAI curves. Reuses the model stack of evaluate_first_order.py."""
     import evaluate_first_order as fo
@@ -268,7 +292,10 @@ def run_example(args, metadatas, station_locations, synth_cache_path,
     else:  # default: largest-magnitude test-split record
         ex_idx = max(indices, key=lambda i: float(metadatas[i]["magnitude"]))
     meta = metadatas[ex_idx]
-    sampler = GwmSampler(args.checkpoint, args.ae_checkpoint)
+    sampler = GwmSampler(
+        args.checkpoint, args.ae_checkpoint, waveform_domain,
+        resolve_embeddings_dir(args.embeddings_dir),
+    )
     out_path = OUT_DIR / (f"example_{synth_cache_path.stem.removeprefix('cache_')}"
                           f"_idx{ex_idx}_model{sampler.cache_tag}"
                           f"_n{args.n_realizations}.npz")
@@ -293,7 +320,7 @@ def run_example(args, metadatas, station_locations, synth_cache_path,
             for k, wave in zip(range(start, start + b), waves):
                 if wave is None:
                     continue
-                acc = _deconvolve(wave, station, code, event_id, "ACC")
+                acc = _deconvolve(wave, station, code, event_id, "ACC", waveform_domain)
                 if acc is not None:
                     cai_synth[k] = arias_curve(acc)[::CAI_DECIMATE]
             done += b
@@ -301,7 +328,7 @@ def run_example(args, metadatas, station_locations, synth_cache_path,
 
     real = _duration_real((str((DIFF_DIR / meta["file_path"]).resolve()),
                            station, meta.get("channel_type", "HH"),
-                           event_id, channel_idx))
+                           event_id, channel_idx, waveform_domain))
     from obspy import read as obspy_read
 
     stream = obspy_read(str((DIFF_DIR / meta["file_path"]).resolve()))
@@ -310,14 +337,15 @@ def run_example(args, metadatas, station_locations, synth_cache_path,
     if abs(trace.stats.sampling_rate - FS) > 1e-6:
         trace.resample(FS)
     acc = _deconvolve(_crop_pad(trace.data.astype(np.float64)), station, code,
-                      event_id, "ACC")
+                      event_id, "ACC", waveform_domain)
     cai_real = (arias_curve(acc)[::CAI_DECIMATE] if acc is not None
                 else np.full(n_curve, np.nan))
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     np.savez(out_path, cai_real=cai_real, cai_synth=cai_synth,
              mag=float(meta["magnitude"]), example_index=ex_idx,
-             station=station, dur_real=real, decimate=CAI_DECIMATE)
+             station=station, dur_real=real, decimate=CAI_DECIMATE,
+             waveform_domain=waveform_domain)
     print(f"[eval] example cache written: {out_path}")
     return out_path
 
@@ -464,6 +492,10 @@ def main():
                              "this value (ties broken by higher SNR). "
                              "Ignored when --example_index is set.")
     parser.add_argument("--checkpoint", type=str, default=None)
+    parser.add_argument(
+        "--embeddings_dir", type=str, default=str(resolve_embeddings_dir(None)),
+        help="Embedding export directory used for metadata and station artifacts.",
+    )
     parser.add_argument("--ae_checkpoint", type=str, default=None)
     parser.add_argument("--steps", type=int, default=1000)
     parser.add_argument("--gl_iters", type=int, default=200)

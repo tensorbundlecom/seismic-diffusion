@@ -3,9 +3,9 @@ Shared GWM sampling stack for scenario-sweep eval scripts.
 
 Wraps the model loading, conditioning construction, and batch sampling
 pattern of evaluate_first_order.py so sweep-style evaluations (attenuation,
-scaling, ...) don't each re-copy it. Waveforms are returned in the counts
-domain before response deconvolution. Legacy per-event AEs retain the
-historical AmplitudeMLP rescale; global AEs bypass it.
+scaling, ...) don't each re-copy it. Waveforms remain in the domain recorded
+by the checkpoint. Legacy per-event AEs retain the historical AmplitudeMLP
+rescale; global AEs bypass it.
 
 Usage:
     sampler = GwmSampler(checkpoint=None, ae_checkpoint=None)
@@ -29,13 +29,15 @@ from ML.diffusion.reconstruction import (
     diffusion_cache_tag,
     resolve_reconstruction_spec,
 )
+from embedding_artifacts import artifact_path, resolve_embeddings_dir
 
 ROOT = Path(__file__).resolve().parents[1]
 DIFF_DIR = ROOT / "ML" / "diffusion"
 
 
 class GwmSampler:
-    def __init__(self, checkpoint=None, ae_checkpoint=None):
+    def __init__(self, checkpoint=None, ae_checkpoint=None, waveform_domain=None,
+                 embeddings_dir=None):
         import sys
 
         sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -45,6 +47,8 @@ class GwmSampler:
 
         self.torch, self.fo = torch, fo
         self._create_cond = create_conditioning_vector
+        self.embeddings_dir = resolve_embeddings_dir(embeddings_dir)
+        fo.configure_embeddings_dir(self.embeddings_dir)
 
         ckpt_dir = Path(checkpoint) if checkpoint else fo.find_latest_checkpoint()
         self.unet, self.scheduler, cfg = fo.load_diffusion(ckpt_dir)
@@ -56,11 +60,15 @@ class GwmSampler:
         self.emb_mean = float(data_normalization.get("mean", cfg.get("emb_mean", 0.0)))
         source_path = ckpt_dir / "embedding_source.json"
         if not source_path.exists():
-            source_path = DIFF_DIR / "embeddings" / "source.json"
+            source_path = artifact_path(self.embeddings_dir, "source.json")
         self.reconstruction = resolve_reconstruction_spec(
             cfg, embeddings_source_path=source_path,
             ae_checkpoint_override=ae_checkpoint,
+            waveform_domain_override=(
+                None if waveform_domain in (None, "auto") else waveform_domain
+            ),
         )
+        self.waveform_domain = self.reconstruction.waveform_domain
         fo.configure_stft(checkpoint_stft_config(cfg, embeddings_source_path=source_path))
         self.cache_tag = diffusion_cache_tag(ckpt_dir, cfg, self.reconstruction)
         self.ae = None
@@ -84,17 +92,29 @@ class GwmSampler:
             self.gain_scale = t(amp_stats["gain_scale"], dtype=torch.float32)
 
         condition_normalization = cfg.get("conditioning_normalization", {})
-        self.cond_mean = t(condition_normalization.get("mean", fo._scale["cond_mean"]),
-                           dtype=torch.float32)
-        self.cond_std = t(condition_normalization.get("std", fo._scale["cond_std"]),
-                          dtype=torch.float32).clamp(min=1e-8)
+        # Do not use ``dict.get(key, fo._scale[...])`` here: Python evaluates
+        # the fallback eagerly, so a complete checkpoint still crashes when a
+        # legacy embeddings/scale.json is absent.
+        cond_mean_value = condition_normalization.get("mean")
+        cond_std_value = condition_normalization.get("std")
+        if cond_mean_value is None:
+            cond_mean_value = fo._scale.get("cond_mean")
+        if cond_std_value is None:
+            cond_std_value = fo._scale.get("cond_std")
+        if cond_mean_value is None or cond_std_value is None:
+            raise ValueError(
+                "Diffusion checkpoint does not record conditioning normalization "
+                "and no compatible legacy scale.json was found."
+            )
+        self.cond_mean = t(cond_mean_value, dtype=torch.float32)
+        self.cond_std = t(cond_std_value, dtype=torch.float32).clamp(min=1e-8)
         self.diff_nc = int(self.unet.num_continuous)
         self.amp_nc = int(self.amp.num_continuous) if self.amp is not None else 0
         self.need_vs30 = max(self.diff_nc, self.amp_nc) >= 7
 
         self.station_locations = json.load(
-            open(DIFF_DIR / "embeddings" / "station_locations.json"))
-        vs30_path = DIFF_DIR / "embeddings" / "station_vs30.json"
+            open(artifact_path(self.embeddings_dir, "station_locations.json")))
+        vs30_path = artifact_path(self.embeddings_dir, "station_vs30.json")
         self.station_vs30 = json.load(open(vs30_path)) if vs30_path.exists() else None
 
     def conds(self, meta):
@@ -122,7 +142,7 @@ class GwmSampler:
         return torch.cat(parts), torch.cat([a[:self.amp_nc], a[nc_full:nc_full + 1]])
 
     def generate(self, metas, steps, gl_iters, seed, pool, channel_idx=0):
-        """One counts-domain waveform per meta (None on Griffin-Lim failure)."""
+        """One checkpoint-domain waveform per meta (None on Griffin-Lim failure)."""
         torch, fo = self.torch, self.fo
         pairs = [self.conds(m) for m in metas]
         diff_cond = torch.stack([p[0] for p in pairs]).unsqueeze(1).to(fo.DEVICE)

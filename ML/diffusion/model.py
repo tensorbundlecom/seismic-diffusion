@@ -21,10 +21,28 @@ class DiffusionUNet2D:
         include_station_id=True,
         num_continuous=NUM_CONTINUOUS,
         base_channels=64,
+        layers_per_block=2,
         num_channels=0,
         channel_emb_dim=16,
     ):
+        base_channels = int(base_channels)
+        layers_per_block = int(layers_per_block)
+        # UNet2DConditionModel uses GroupNorm with 32 groups by default.  Every
+        # block width is a multiple of base_channels, so validating the base is
+        # sufficient to make all three resolution levels compatible.
+        if base_channels <= 0 or base_channels % 32 != 0:
+            raise ValueError(
+                "base_channels must be a positive multiple of 32 because the "
+                "Diffusers UNet uses GroupNorm with 32 groups; "
+                f"got {base_channels}."
+            )
+        if layers_per_block <= 0:
+            raise ValueError(
+                f"layers_per_block must be positive; got {layers_per_block}."
+            )
         self.num_continuous = num_continuous
+        self.base_channels = base_channels
+        self.layers_per_block = layers_per_block
         self.include_station_id = bool(include_station_id)
         self.num_stations = int(num_stations) if self.include_station_id else 0
         self.station_emb_dim = int(station_emb_dim) if self.include_station_id else 0
@@ -39,15 +57,15 @@ class DiffusionUNet2D:
             sample_size=None,
             in_channels=in_channels,
             out_channels=out_channels,
-            # 3 resolution levels: (64, 128, 256)
+            # 3 resolution levels: (base, 2 * base, 4 * base)
             # The first block preserves the in_channels count so there
             # is no information bottleneck at the very start.
             block_out_channels=(
-                base_channels,
-                base_channels * 2,
-                base_channels * 4,
+                self.base_channels,
+                self.base_channels * 2,
+                self.base_channels * 4,
             ),
-            layers_per_block=2,
+            layers_per_block=self.layers_per_block,
             down_block_types=(
                 "DownBlock2D",
                 "CrossAttnDownBlock2D",
@@ -136,6 +154,8 @@ class DiffusionUNet2D:
             "num_continuous": self.num_continuous,
             "num_channels": self.num_channels,
             "channel_emb_dim": self.channel_emb_dim,
+            "base_channels": self.base_channels,
+            "layers_per_block": self.layers_per_block,
         }
         if self.include_station_id:
             payload["state_dict"] = self.station_embedding.state_dict()
@@ -156,6 +176,7 @@ class DiffusionUNet2D:
             include_station_id=bool(emb_payload.get("include_station_id", True)),
             num_continuous=int(emb_payload.get("num_continuous", NUM_CONTINUOUS)),
             base_channels=int(unet.config.block_out_channels[0]),
+            layers_per_block=int(unet.config.layers_per_block),
             num_channels=int(emb_payload.get("num_channels", 0)),
             channel_emb_dim=int(emb_payload.get("channel_emb_dim", 16)),
         )

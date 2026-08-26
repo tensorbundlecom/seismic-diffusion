@@ -9,9 +9,14 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 from ML.autoencoder.inference import load_model
+from ML.diffusion.embedding_paths import resolve_project_path
 
 _scale_path = Path(__file__).resolve().parent / "embeddings" / "scale.json"
-_scale = json.load(open(_scale_path)) if _scale_path.exists() else {}
+if _scale_path.exists():
+    with _scale_path.open("r", encoding="utf-8") as handle:
+        _scale = json.load(handle)
+else:
+    _scale = {}
 EMB_STD    = _scale.get("emb_std", 1.0)
 EMB_MEAN   = _scale.get("emb_mean", 0.0)
 _cond_mean = torch.tensor(_scale["cond_mean"]) if "cond_mean" in _scale else None
@@ -176,32 +181,37 @@ def _get_embeddings_source_checkpoint():
     if not _source_path.exists():
         return None
     try:
-        source = json.load(open(_source_path))
+        with _source_path.open("r", encoding="utf-8") as handle:
+            source = json.load(handle)
     except Exception:
         return None
     ckpt = source.get("ae_checkpoint")
     if not ckpt:
         return None
-    ckpt_path = Path(ckpt)
-    if not ckpt_path.is_absolute():
-        ckpt_path = (Path(__file__).resolve().parent / ckpt_path).resolve()
-    return str(ckpt_path) if ckpt_path.exists() else None
+    ckpt_path = resolve_project_path(ckpt)
+    return str(ckpt_path) if ckpt_path.is_file() else None
 
-_ae_model = None
+_ae_models = {}
 
-def _get_ae_model():
-    """Lazy-load the autoencoder (so importing utils.py has no side-effects)."""
-    global _ae_model
-    if _ae_model is None:
-        import torch
+def _get_ae_model(ae_checkpoint=None):
+    """Lazy-load the requested autoencoder, caching models by checkpoint path."""
+    if ae_checkpoint is None:
         ckpt = _get_embeddings_source_checkpoint() or _find_latest_ae_checkpoint()
+    else:
+        ckpt_path = resolve_project_path(ae_checkpoint)
+        if not ckpt_path.is_file():
+            raise FileNotFoundError(f"AE checkpoint does not exist: {ckpt_path}")
+        ckpt = str(ckpt_path)
+    if ckpt not in _ae_models:
+        import torch
         print(f"[diffusion.utils] Loading AE checkpoint for decode: {ckpt}")
-        _ae_model, _ = load_model(ckpt, device="cuda" if torch.cuda.is_available() else "cpu")
-        _ae_model.eval()
-    return _ae_model
+        model, _ = load_model(ckpt, device="cuda" if torch.cuda.is_available() else "cpu")
+        model.eval()
+        _ae_models[ckpt] = model
+    return _ae_models[ckpt]
 
-def decode_embedding(embedding):
-    ae = _get_ae_model()
+def decode_embedding(embedding, ae_checkpoint=None):
+    ae = _get_ae_model(ae_checkpoint)
     device = next(ae.parameters()).device
     decoded = ae.decode(embedding.unsqueeze(0).to(device))[0].cpu()
     return decoded

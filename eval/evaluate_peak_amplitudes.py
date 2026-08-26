@@ -7,8 +7,8 @@ hypocentral distance, with binned mean +/- std overlays:
   a,b) Generative waveform model (GWM): PGA and PGV measured on the diffusion
        synthetics from the evaluate_first_order.py cache (one synthetic per
        test-split record, matched conditioning, E component). Real and
-       synthetic waveforms go through the identical response deconvolution,
-       so the ratio compares like with like.
+       synthetic waveforms go through the same domain-aware physical-motion
+       conversion as real data, so the ratio compares like with like.
   c,d) A ground motion model chosen with --gmm, for records with
        M >= --gmm_min_mag (default: the model's validity floor). Observed
        peaks are RotD50 of the two horizontal components.
@@ -53,7 +53,7 @@ test-split records, which is enough for --set_mode val/matched and avoids
 processing tens of thousands of extra waveforms; use --scope all (with
 --set_mode all) to evaluate the GMM on every eligible record instead.
 `plot` only needs the cache. Synthetic waveforms are NOT regenerated here;
-they are read from the counts-domain cache written by evaluate_first_order.py.
+they retain the domain recorded in the evaluate_first_order.py cache.
 """
 
 import argparse
@@ -66,9 +66,19 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from ML.diffusion.waveform_domain import (
+    INSTRUMENT_COUNTS,
+    normalize_waveform_domain,
+    physical_acceleration_to_motion,
+)
+from embedding_artifacts import artifact_path, resolve_embeddings_dir
+from output_paths import evaluation_output_dir
+
 DIFF_DIR = ROOT / "ML" / "diffusion"
-FIRST_ORDER_DIR = ROOT / "eval" / "first_order"
-OUT_DIR = ROOT / "eval" / "peak_amplitudes"
+FIRST_ORDER_DIR = evaluation_output_dir("first_order")
+OUT_DIR = evaluation_output_dir("peak_amplitudes")
 RESPONSES_XML = ROOT / "eval" / "station_responses.xml"
 CHANNEL_NAMES = ["E", "N", "Z"]
 
@@ -78,11 +88,34 @@ GRAVITY = 9.80665          # GMM PGA outputs are in g
 ROTD_ANGLES_DEG = 180      # RotD50: 1-degree rotation grid over [0, 180)
 VS30_RANGE = (150.0, 1500.0)  # BSSA14 validity; excludes bad lookups (GADA: 3.3 m/s)
 
-_scale = json.load(open(DIFF_DIR / "embeddings" / "scale.json"))
-_source = json.load(open(DIFF_DIR / "embeddings" / "source.json"))
+EMBEDDINGS_DIR = resolve_embeddings_dir(None)
+_DEFAULT_STFT = {
+    "nperseg": 256,
+    "noverlap": 192,
+    "nfft": 256,
+    "resample_hz": 100.0,
+    "target_seconds": 70.0,
+}
+_source = {"stft": dict(_DEFAULT_STFT)}
+_default_source_path = artifact_path(EMBEDDINGS_DIR, "source.json")
+if _default_source_path.is_file():
+    with _default_source_path.open(encoding="utf-8") as handle:
+        _source = json.load(handle)
 STFT_CFG = _source["stft"]
 FS = float(STFT_CFG.get("resample_hz", 100.0))
 TARGET_SAMPLES = int(round(FS * float(STFT_CFG.get("target_seconds", 70.0))))
+
+
+def configure_embeddings_dir(path: str | Path | None) -> Path:
+    """Select the embedding export used for metadata and STFT geometry."""
+    global EMBEDDINGS_DIR, _source, STFT_CFG, FS, TARGET_SAMPLES
+    EMBEDDINGS_DIR = resolve_embeddings_dir(path)
+    with artifact_path(EMBEDDINGS_DIR, "source.json").open(encoding="utf-8") as handle:
+        _source = json.load(handle)
+    STFT_CFG = _source["stft"]
+    FS = float(STFT_CFG.get("resample_hz", 100.0))
+    TARGET_SAMPLES = int(round(FS * float(STFT_CFG.get("target_seconds", 70.0))))
+    return EMBEDDINGS_DIR
 
 
 # ── Response deconvolution (runs in worker processes) ─────────────────────────
@@ -123,8 +156,11 @@ def _find_channel_epoch(station: str, channel_code: str, t):
 
 
 def _deconvolve(data: np.ndarray, station: str, channel_code: str,
-                event_time_str: str, output: str):
-    """Counts -> ground motion ("ACC": m/s^2, "VEL": m/s) via response removal."""
+                event_time_str: str, output: str,
+                waveform_domain: str = INSTRUMENT_COUNTS):
+    """Convert counts or physical acceleration to the requested ground motion."""
+    if waveform_domain != INSTRUMENT_COUNTS:
+        return physical_acceleration_to_motion(data, output, FS)
     from obspy import Trace, UTCDateTime
 
     try:
@@ -173,7 +209,7 @@ def _rotd50(e: np.ndarray, n: np.ndarray) -> float:
 
 def _process_real(args):
     """Worker: real mseed -> (pga_e, pgv_e, pga_rotd50, pgv_rotd50)."""
-    path_str, station, channel_type, event_id = args
+    path_str, station, channel_type, event_id, waveform_domain = args
     out = [np.nan] * 4
     try:
         from obspy import read as obspy_read
@@ -193,7 +229,8 @@ def _process_real(args):
         for kind in ("ACC", "VEL"):
             for comp in ("E", "N"):
                 motion[kind, comp] = _deconvolve(
-                    counts[comp], station, f"{channel_type}{comp}", event_id, kind
+                    counts[comp], station, f"{channel_type}{comp}", event_id, kind,
+                    waveform_domain,
                 )
 
         if motion["ACC", "E"] is not None:
@@ -211,12 +248,12 @@ def _process_real(args):
 
 def _process_synth(args):
     """Worker: cached counts-domain synthetic -> (pga, pgv)."""
-    wave, station, channel_code, event_id = args
+    wave, station, channel_code, event_id, waveform_domain = args
     out = [np.nan, np.nan]
     try:
         data = np.asarray(wave, dtype=np.float64)
-        acc = _deconvolve(data, station, channel_code, event_id, "ACC")
-        vel = _deconvolve(data, station, channel_code, event_id, "VEL")
+        acc = _deconvolve(data, station, channel_code, event_id, "ACC", waveform_domain)
+        vel = _deconvolve(data, station, channel_code, event_id, "VEL", waveform_domain)
         if acc is not None:
             out[0] = float(np.max(np.abs(acc)))
         if vel is not None:
@@ -345,7 +382,7 @@ def init_or_load_cache(path: Path, indices, val_set):
                                if idx in pos])
     new_rows, old_rows = np.asarray(new_rows), np.asarray(old_rows)
     for key, arr in old.items():
-        if key in ("indices", "in_val"):
+        if key in ("indices", "in_val", "waveform_domain"):
             continue
         if key not in cache:  # per-GMM prediction arrays
             cache[key] = np.full(n, np.nan, dtype=np.float64)
@@ -363,23 +400,27 @@ def save_cache(path: Path, cache: dict):
 
 # ── compute stage ─────────────────────────────────────────────────────────────
 def run_compute(args):
-    if not RESPONSES_XML.exists():
-        raise FileNotFoundError(
-            f"Missing {RESPONSES_XML}. Run eval/fetch_station_responses.py first."
-        )
     from obspy.geodetics import gps2dist_azimuth
 
     gmm = GMM_REGISTRY[args.gmm]
     min_mag = args.gmm_min_mag if args.gmm_min_mag is not None else gmm["min_mag"]
 
-    metadatas = json.load(open(DIFF_DIR / "embeddings" / "metadata.json"))
-    station_locations = json.load(open(DIFF_DIR / "embeddings" / "station_locations.json"))
-    station_vs30 = json.load(open(DIFF_DIR / "embeddings" / "station_vs30.json"))
+    metadatas = json.load(open(artifact_path(EMBEDDINGS_DIR, "metadata.json")))
+    station_locations = json.load(open(artifact_path(EMBEDDINGS_DIR, "station_locations.json")))
+    station_vs30 = json.load(open(artifact_path(EMBEDDINGS_DIR, "station_vs30.json")))
 
     synth_cache_path = Path(args.cache) if args.cache else find_synth_cache()
     with np.load(synth_cache_path) as sc:
         synth_indices = sc["indices"].astype(int).tolist()
         wave_synth = sc["wave_synth"]
+        waveform_domain = normalize_waveform_domain(
+            str(sc["waveform_domain"].item())
+            if "waveform_domain" in sc.files else INSTRUMENT_COUNTS
+        )
+    if waveform_domain == INSTRUMENT_COUNTS and not RESPONSES_XML.exists():
+        raise FileNotFoundError(
+            f"Missing {RESPONSES_XML}. Run eval/fetch_station_responses.py first."
+        )
     channel = synth_cache_path.stem.rsplit("_ch", 1)[-1].split("_")[0]
     print(f"[eval] synthetics: {synth_cache_path.name} "
           f"({len(synth_indices)} samples, channel {channel})")
@@ -395,6 +436,7 @@ def run_compute(args):
         indices = [indices[i] for i in picks]
     path = cache_path(synth_cache_path)
     cache = init_or_load_cache(path, indices, val_set)
+    cache["waveform_domain"] = np.asarray(waveform_domain)
     indices = cache["indices"].tolist()
     n_gmm = sum(1 for i in indices if i in eligible)
     print(f"[eval] records: {len(indices)} total "
@@ -443,7 +485,7 @@ def run_compute(args):
             j: (resolve(metadatas[indices[j]]),
                 metadatas[indices[j]]["station_name"],
                 metadatas[indices[j]].get("channel_type", "HH"),
-                str(metadatas[indices[j]].get("event_id", "")))
+                str(metadatas[indices[j]].get("event_id", "")), waveform_domain)
             for j in todo_real
         }
 
@@ -466,7 +508,7 @@ def run_compute(args):
             m = metadatas[indices[j]]
             code = f"{m.get('channel_type', 'HH')}{channel}"
             jobs[j] = (wave_synth[synth_row[indices[j]]], m["station_name"],
-                       code, str(m.get("event_id", "")))
+                       code, str(m.get("event_id", "")), waveform_domain)
 
         def apply_synth(j, out):
             cache["pga_synth_e"][j], cache["pgv_synth_e"][j] = out
@@ -638,7 +680,13 @@ def main():
                              "dataset (needed for --set_mode all).")
     parser.add_argument("--cache", type=str, default=None,
                         help="Synthetic-waveform cache from evaluate_first_order.py "
-                             "(default: most recent in eval/first_order).")
+                            "(default: most recent in eval/first_order).")
+    parser.add_argument(
+        "--embeddings_dir",
+        type=str,
+        default=str(EMBEDDINGS_DIR),
+        help="Embedding export directory used for metadata and station artifacts.",
+    )
     parser.add_argument("--peaks_cache", type=str, default=None,
                         help="Peaks .npz for `plot` (default: most recent).")
     parser.add_argument("--limit", type=int, default=0,
@@ -658,6 +706,7 @@ def main():
                              "Useful when the GMM record set is much smaller.")
     parser.add_argument("--min_bin_count", type=int, default=5)
     args = parser.parse_args()
+    configure_embeddings_dir(args.embeddings_dir)
 
     if args.stage in ("compute", "all"):
         path = run_compute(args)

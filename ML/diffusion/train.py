@@ -5,6 +5,7 @@ import shutil
 import argparse
 import hashlib
 import math
+from uuid import uuid4
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -15,6 +16,27 @@ from torch.optim import AdamW
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils import generate, decode_embedding
+from evaluation import evaluation_run_output_root, run_final_evaluation
+from embedding_paths import (
+    embedding_artifact_paths,
+    project_relative_path,
+    resolve_project_path,
+)
+from best_validation import (
+    best_validation_checkpoint_path,
+    is_strictly_better_validation_loss,
+    replace_checkpoint_directory,
+    run_checkpoint_path,
+    select_evaluation_checkpoint,
+)
+from wandb_naming import build_wandb_run_name
+from waveform_domain import resolve_waveform_domain, normalize_waveform_domain
+from sweep_hyperparameters import (
+    groupnorm_base_channels,
+    nonnegative_finite_float,
+    positive_finite_float,
+    positive_int,
+)
 import wandb
 
 
@@ -57,6 +79,10 @@ def _validate_embedding_source(source: Any) -> Dict[str, Any]:
         raise ValueError(f"{SOURCE_PATH}: 'stft' must be an object.")
     if not isinstance(source["ae_checkpoint"], str) or not source["ae_checkpoint"].strip():
         raise ValueError(f"{SOURCE_PATH}: 'ae_checkpoint' must be a non-empty string.")
+    if "ae_name" in source and (
+        not isinstance(source["ae_name"], str) or not source["ae_name"].strip()
+    ):
+        raise ValueError(f"{SOURCE_PATH}: 'ae_name' must be a non-empty string when present.")
 
     mode = str(source["normalization_mode"]).strip().lower()
     if mode not in {"global", "per_event"}:
@@ -91,6 +117,8 @@ def _validate_embedding_source(source: Any) -> Dict[str, Any]:
         )
     source["normalization_mode"] = mode
     source["amplitude_epsilon"] = amplitude_epsilon
+    if source.get("waveform_domain") is not None:
+        source["waveform_domain"] = normalize_waveform_domain(source["waveform_domain"])
 
     try:
         count = int(source["num_embeddings"])
@@ -393,6 +421,24 @@ parser.add_argument(
     ),
 )
 parser.add_argument(
+    "--embeddings_dir",
+    type=str,
+    default="embeddings",
+    help=(
+        "Directory containing one embedding export (embeddings.pt, metadata.json, "
+        "and source.json). The source provenance selects the matching AE and domain."
+    ),
+)
+parser.add_argument(
+    "--waveform_domain",
+    choices=["auto", "instrument_counts", "physical_acceleration"],
+    default="auto",
+    help=(
+        "Waveform units represented by the AE/diffusion output. auto uses embedding "
+        "provenance and treats legacy exports as instrument_counts."
+    ),
+)
+parser.add_argument(
     "--experiment_name",
     type=str,
     default=None,
@@ -424,6 +470,24 @@ parser.add_argument(
     help="wandb entity/username (defaults to your logged-in account).",
 )
 parser.add_argument(
+    "--wandb_run_name",
+    type=str,
+    default=None,
+    help=(
+        "Optional W&B display-name base, independent of --experiment_name and "
+        "checkpoint/TensorBoard paths."
+    ),
+)
+parser.add_argument(
+    "--wandb_name_params",
+    type=str,
+    default=None,
+    help=(
+        "Comma-separated parsed CLI parameter names to append to --wandb_run_name "
+        "as name=value (for example: prediction_target,data_mode)."
+    ),
+)
+parser.add_argument(
     "--num_workers",
     type=int,
     default=4,
@@ -434,6 +498,39 @@ parser.add_argument(
     type=int,
     default=500,
     help="Number of training epochs (default: 500).",
+)
+parser.add_argument(
+    "--batch_size",
+    type=positive_int,
+    default=32,
+    help="Training/validation DataLoader batch size (default: 32).",
+)
+parser.add_argument(
+    "--lr",
+    type=positive_finite_float,
+    default=1e-4,
+    help="AdamW peak learning rate before cosine decay (default: 1e-4).",
+)
+parser.add_argument(
+    "--weight_decay",
+    type=nonnegative_finite_float,
+    default=1e-2,
+    help="AdamW weight decay (default: 1e-2).",
+)
+parser.add_argument(
+    "--base_channels",
+    type=groupnorm_base_channels,
+    default=64,
+    help=(
+        "Base U-Net width; must be a positive multiple of 32 for Diffusers GroupNorm "
+        "(default: 64)."
+    ),
+)
+parser.add_argument(
+    "--layers_per_block",
+    type=positive_int,
+    default=2,
+    help="Residual layers per U-Net block (default: 2).",
 )
 parser.add_argument(
     "--use_vs30",
@@ -470,8 +567,11 @@ parser.add_argument(
 parser.add_argument(
     "--station_vs30",
     type=str,
-    default="embeddings/station_vs30.json",
-    help="Path to the station -> Vs30 JSON lookup used when --use_vs30 is set.",
+    default=None,
+    help=(
+        "Path to the station -> Vs30 JSON lookup used when --use_vs30 is set. "
+        "Defaults to station_vs30.json inside --embeddings_dir."
+    ),
 )
 parser.add_argument(
     "--val_fraction",
@@ -542,16 +642,49 @@ parser.add_argument(
     default=3,
     help="How many step_* checkpoints to keep when batch checkpointing is enabled.",
 )
+parser.add_argument(
+    "--run_final_evaluation",
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help=(
+        "After a W&B-tracked run, evaluate the saved final checkpoint with the "
+        "full eval suite and log its figures to that same run (default: enabled). "
+        "Use --no-run_final_evaluation to skip this potentially long step."
+    ),
+)
 args = parser.parse_args()
 args.include_station_id = str(args.include_station_id).strip().lower() == "true"
 args.use_vs30 = str(args.use_vs30).strip().lower() == "true"
+
+# Resolve every mutable embedding input from one explicitly selected export.
+# The default keeps the legacy flat embeddings/ layout working.
+EMBEDDINGS_DIR = Path(args.embeddings_dir).expanduser().resolve()
+_embedding_paths = embedding_artifact_paths(EMBEDDINGS_DIR)
+SOURCE_PATH = _embedding_paths["source"]
+METADATA_PATH = _embedding_paths["metadata"]
+EMBEDDINGS_PATH = _embedding_paths["embeddings"]
+
+
+def _embedding_auxiliary_path(filename: str, explicit: str | None = None) -> Path:
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    return EMBEDDINGS_DIR / filename
+
+
+STATION_LOCATIONS_PATH = _embedding_auxiliary_path("station_locations.json")
+STATION_VS30_PATH = _embedding_auxiliary_path("station_vs30.json", args.station_vs30)
+args.embeddings_dir = str(EMBEDDINGS_DIR)
+args.station_vs30 = str(STATION_VS30_PATH)
 
 # --- Config ---
 NUM_EPOCHS = int(args.num_epochs)
 if NUM_EPOCHS <= 0:
     raise ValueError(f"--num_epochs must be positive; got {NUM_EPOCHS}.")
-BATCH_SIZE = 32
-LR = 1e-4
+BATCH_SIZE = int(args.batch_size)
+LR = float(args.lr)
+WEIGHT_DECAY = float(args.weight_decay)
+BASE_CHANNELS = int(args.base_channels)
+LAYERS_PER_BLOCK = int(args.layers_per_block)
 NUM_TRAIN_TIMESTEPS = 1000
 BETA_START = 1e-4
 BETA_END = 0.02
@@ -585,10 +718,16 @@ if EXPERIMENT_NAME is not None:
 
 writer = SummaryWriter(log_dir=str(TENSORBOARD_LOG_DIR))
 print(f"[train] experiment={EXPERIMENT_NAME or 'default'}, tensorboard={TENSORBOARD_LOG_DIR}")
+print(f"[train] embedding export: {EMBEDDINGS_DIR}")
 
 wb = None
 if args.use_wandb:
-    run_name = EXPERIMENT_NAME or f"diffusion_{args.data_mode}_{TRAINING_TYPE}"
+    run_name = build_wandb_run_name(
+        args.wandb_run_name,
+        args.wandb_name_params,
+        args,
+        EXPERIMENT_NAME or f"diffusion_{args.data_mode}_{TRAINING_TYPE}",
+    )
     wb = wandb.init(
         project=args.wandb_project,
         entity=args.wandb_entity,
@@ -599,11 +738,14 @@ if args.use_wandb:
             "prediction_target": args.prediction_target,
             "hf_prediction_type": PREDICTION_TARGET,
             "data_mode": args.data_mode,
+            "embeddings_dir": str(EMBEDDINGS_DIR),
             "experiment_name": EXPERIMENT_NAME,
             "all_cli_args": vars(args),
             "batch_size": BATCH_SIZE,
             "lr": LR,
-            "weight_decay": 1e-2,
+            "weight_decay": WEIGHT_DECAY,
+            "base_channels": BASE_CHANNELS,
+            "layers_per_block": LAYERS_PER_BLOCK,
             "min_lr_ratio": MIN_LR_RATIO,
             "num_train_timesteps": NUM_TRAIN_TIMESTEPS,
             "beta_start": BETA_START,
@@ -625,6 +767,7 @@ if args.use_wandb:
             "log_images_every_n_batches": args.log_images_every_n_batches,
             "checkpoint_every_n_batches": args.checkpoint_every_n_batches,
             "keep_last_batch_checkpoints": args.keep_last_batch_checkpoints,
+            "run_final_evaluation": bool(args.run_final_evaluation),
             "station_vs30": args.station_vs30,
             "wandb_project": args.wandb_project,
             "wandb_entity": args.wandb_entity,
@@ -638,17 +781,29 @@ if args.use_wandb:
 # diffusion checkpoint that later cannot be reconstructed.
 embedding_source = _validate_embedding_source(_read_json(SOURCE_PATH))
 embedding_source_sha256 = _sha256_file(SOURCE_PATH)
-recorded_ae_path = Path(embedding_source["ae_checkpoint"]).expanduser()
-ae_candidates = [recorded_ae_path]
-if not recorded_ae_path.is_absolute():
-    ae_candidates = [Path.cwd() / recorded_ae_path, SOURCE_PATH.parent / recorded_ae_path]
-ae_checkpoint_path = next((path.resolve() for path in ae_candidates if path.is_file()), None)
-if ae_checkpoint_path is None:
-    raise FileNotFoundError(
-        f"AE checkpoint recorded by {SOURCE_PATH} does not exist: "
-        f"{embedding_source['ae_checkpoint']!r}."
+WAVEFORM_DOMAIN = resolve_waveform_domain(
+    embedding_source.get("waveform_domain"), args.waveform_domain
+)
+print(f"[train] waveform domain: {WAVEFORM_DOMAIN}")
+try:
+    ae_checkpoint_path = resolve_project_path(
+        embedding_source["ae_checkpoint"],
+        ae_name=embedding_source.get("ae_name"),
+        require_exists=True,
     )
+except FileNotFoundError as exc:
+    raise FileNotFoundError(f"{SOURCE_PATH}: {exc}") from None
 ae_checkpoint_sha256 = _sha256_file(ae_checkpoint_path)
+recorded_ae_name = embedding_source.get("ae_name")
+if recorded_ae_name is not None and recorded_ae_name != ae_checkpoint_path.parent.name:
+    raise ValueError(
+        f"{SOURCE_PATH}: ae_name={recorded_ae_name!r} does not match the recorded "
+        f"checkpoint parent {ae_checkpoint_path.parent.name!r}."
+    )
+print(
+    f"[train] autoencoder: {recorded_ae_name or ae_checkpoint_path.parent.name} "
+    f"({ae_checkpoint_path})"
+)
 metadatas = _read_json(METADATA_PATH)
 if not isinstance(metadatas, list):
     raise ValueError(f"{METADATA_PATH} must contain a JSON list.")
@@ -662,7 +817,7 @@ if int(embedding_source["num_embeddings"]) != len(metadatas):
         f"({len(metadatas)}). Recreate embeddings so their artifacts match."
     )
 
-station_locations_path = EMBEDDINGS_DIR / "station_locations.json"
+station_locations_path = STATION_LOCATIONS_PATH
 if not station_locations_path.exists():
     raise FileNotFoundError(
         f"Missing {station_locations_path}. Run fetch_station_locations.py first."
@@ -671,7 +826,7 @@ station_locations = _read_json(station_locations_path)
 
 station_vs30 = None
 if args.use_vs30:
-    vs30_path = Path(args.station_vs30)
+    vs30_path = STATION_VS30_PATH
     if not vs30_path.exists():
         raise FileNotFoundError(
             f"Missing {vs30_path}. Run compute_station_vs30.py first to build the "
@@ -798,7 +953,9 @@ if args.data_mode == "latent":
     if not math.isfinite(data_mean) or not math.isfinite(data_std):
         raise ValueError("Non-finite train-only latent normalization statistics.")
     train_data = (data_tensor - data_mean) / data_std
-    fixed_real_stft = decode_embedding(data_tensor[fixed_real_idx])
+    fixed_real_stft = decode_embedding(
+        data_tensor[fixed_real_idx], ae_checkpoint=ae_checkpoint_path
+    )
     full_dataset = TensorDataset(train_data, cond_vectors)
     train_dataset = Subset(full_dataset, train_indices)
     val_dataset = Subset(full_dataset, val_indices) if val_indices else None
@@ -889,6 +1046,8 @@ model = DiffusionUNet2D(
     num_continuous=NUM_CONTINUOUS,
     num_channels=num_channels,
     channel_emb_dim=CHANNEL_EMB_DIM,
+    base_channels=BASE_CHANNELS,
+    layers_per_block=LAYERS_PER_BLOCK,
 )
 model.to(DEVICE)
 print(
@@ -909,6 +1068,7 @@ print(f"Prediction target: {args.prediction_target} (scheduler prediction_type={
 
 scale_payload = {
     "schema_version": 2,
+    "embeddings_dir": project_relative_path(EMBEDDINGS_DIR),
     "emb_mean": float(data_mean),
     "emb_std": float(data_std),
     "data_normalization": {
@@ -943,12 +1103,15 @@ scale_payload = {
     "held_out_station_ids": held_out_station_ids,
     "mappings": index_mappings,
 }
+portable_embedding_source = dict(embedding_source)
+portable_embedding_source["ae_checkpoint"] = project_relative_path(ae_checkpoint_path)
 embedding_provenance = {
     "schema_version": 1,
-    "source_path": str(SOURCE_PATH.resolve()),
+    "embeddings_dir": project_relative_path(EMBEDDINGS_DIR),
+    "source_path": project_relative_path(SOURCE_PATH),
     "source_sha256": embedding_source_sha256,
-    "source": embedding_source,
-    "ae_checkpoint": str(ae_checkpoint_path),
+    "source": portable_embedding_source,
+    "ae_checkpoint": project_relative_path(ae_checkpoint_path),
     "ae_checkpoint_sha256": ae_checkpoint_sha256,
     # Direct aliases make the critical inverse-normalization contract easy for
     # inference tools to consume without unpacking the nested source snapshot.
@@ -956,6 +1119,7 @@ embedding_provenance = {
     "global_min": embedding_source.get("global_min"),
     "global_max": embedding_source.get("global_max"),
     "amplitude_epsilon": embedding_source["amplitude_epsilon"],
+    "waveform_domain": WAVEFORM_DOMAIN,
     "normalization": {
         "mode": embedding_source["normalization_mode"],
         "global_min": embedding_source.get("global_min"),
@@ -967,12 +1131,15 @@ embedding_provenance = {
     "num_embeddings": int(embedding_source["num_embeddings"]),
     "embedding_shape": [int(dim) for dim in embedding_source["embedding_shape"]],
 }
-with (EMBEDDINGS_DIR / "scale.json").open("w", encoding="utf-8") as handle:
-    json.dump(scale_payload, handle, indent=2)
 if wb is not None:
     wb.config.update(
         {
             "data_shape": scale_payload["data_shape"],
+            "waveform_domain": WAVEFORM_DOMAIN,
+            # Keep this identical to the initial W&B config value. The
+            # checkpoint provenance below deliberately uses a portable
+            # project-relative path instead.
+            "embeddings_dir": str(EMBEDDINGS_DIR),
             "emb_mean": float(data_mean),
             "emb_std": float(data_std),
             "num_train": len(train_indices),
@@ -988,7 +1155,7 @@ if wb is not None:
         }
     )
 
-optimizer = AdamW(model.parameters(), lr=LR, weight_decay=1e-2)
+optimizer = AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
 
 # Per-step LR schedule — warmup is capped at 10% of total steps so short runs aren't hurt
 STEPS_PER_EPOCH = max(1, len(dataloader))
@@ -1060,7 +1227,7 @@ def _log_preview_images(log_step: int, epoch: int):
         training_type=TRAINING_TYPE,
     )
     if args.data_mode == "latent":
-        vis_real = decode_embedding(gen_real)
+        vis_real = decode_embedding(gen_real, ae_checkpoint=ae_checkpoint_path)
     else:
         vis_real = gen_real
     _print_data_stats(f"real_cond step={log_step}", vis_real, epoch)
@@ -1086,7 +1253,7 @@ def _log_preview_images(log_step: int, epoch: int):
         training_type=TRAINING_TYPE,
     )
     if args.data_mode == "latent":
-        vis_rand = decode_embedding(gen_rand)
+        vis_rand = decode_embedding(gen_rand, ae_checkpoint=ae_checkpoint_path)
     else:
         vis_rand = gen_rand
     _print_data_stats(f"rand_cond step={log_step}", vis_rand, epoch)
@@ -1096,53 +1263,82 @@ def _log_preview_images(log_step: int, epoch: int):
         wb.log(ims, step=log_step)
 
 
-def _save_checkpoint(ckpt_name: str):
-    ckpt_path = CHECKPOINT_ROOT / ckpt_name
-    ckpt_path.mkdir(parents=True, exist_ok=True)
-    model.save_pretrained(str(ckpt_path))
-    noise_scheduler.save_pretrained(str(ckpt_path))
-    training_config = {
-        "schema_version": 2,
-        "data_mode": args.data_mode,
-        "training_type": TRAINING_TYPE,
-        "experiment_name": EXPERIMENT_NAME,
-        "data_shape": [int(data_shape[0]), int(data_shape[1]), int(data_shape[2])],
-        # Legacy aliases remain so existing consumers continue to work.
-        "emb_mean": float(data_mean),
-        "emb_std": float(data_std),
-        "data_normalization": scale_payload["data_normalization"],
-        "conditioning_normalization": scale_payload["conditioning_normalization"],
-        "num_continuous": NUM_CONTINUOUS,
-        "station_emb_dim": STATION_EMB_DIM,
-        "include_station_id": bool(args.include_station_id),
-        "num_channels": num_channels,
-        "channel_emb_dim": CHANNEL_EMB_DIM,
-        "stft_freq_bins": int(data_shape[1]) if args.data_mode == "stft" else None,
-        "stft_time_bins": int(data_shape[2]) if args.data_mode == "stft" else None,
-        # A complete, checkpoint-local record of the embedding export is the
-        # source of truth at inference time. Never rely on a future mutable
-        # embeddings/source.json when reconstructing this model.
-        "embedding_provenance": embedding_provenance,
-        "embedding_scale": scale_payload,
-        "split": {
-            "split_seed": int(args.split_seed),
-            "val_fraction": float(val_fraction),
-            "train_indices": train_indices,
-            "val_indices": val_indices,
-            "held_out_indices": held_out_indices,
-            "held_out_station_ids": held_out_station_ids,
-        },
-        "mappings": index_mappings,
-    }
-    with (ckpt_path / "training_config.json").open("w", encoding="utf-8") as handle:
-        json.dump(training_config, handle, indent=2)
-    # Sidecar copies make provenance discoverable without parsing a large
-    # training_config and keep the checkpoint self-contained when embeddings
-    # are regenerated for a subsequent experiment.
-    with (ckpt_path / "embedding_source.json").open("w", encoding="utf-8") as handle:
-        json.dump(embedding_source, handle, indent=2)
-    with (ckpt_path / "embedding_scale.json").open("w", encoding="utf-8") as handle:
-        json.dump(scale_payload, handle, indent=2)
+def _save_checkpoint(
+    ckpt_name: str,
+    *,
+    checkpoint_metadata: Dict[str, Any] | None = None,
+    checkpoint_path: Path | None = None,
+    replace_existing: bool = False,
+):
+    ckpt_path = checkpoint_path or CHECKPOINT_ROOT / ckpt_name
+    save_path = ckpt_path
+    if replace_existing:
+        # diffusers' save_pretrained updates files in-place and does not remove
+        # files that disappeared from a newer save. Stage the complete new
+        # checkpoint instead, then swap it in so a write failure keeps the old
+        # selected checkpoint intact.
+        save_path = ckpt_path.parent / f".{ckpt_path.name}.tmp-{uuid4().hex}"
+    save_path.mkdir(parents=True, exist_ok=True)
+    try:
+        model.save_pretrained(str(save_path))
+        noise_scheduler.save_pretrained(str(save_path))
+        training_config = {
+            "schema_version": 2,
+            "data_mode": args.data_mode,
+            "training_type": TRAINING_TYPE,
+            "waveform_domain": WAVEFORM_DOMAIN,
+            "embeddings_dir": project_relative_path(EMBEDDINGS_DIR),
+            "experiment_name": EXPERIMENT_NAME,
+            "data_shape": [int(data_shape[0]), int(data_shape[1]), int(data_shape[2])],
+            # Legacy aliases remain so existing consumers continue to work.
+            "emb_mean": float(data_mean),
+            "emb_std": float(data_std),
+            "data_normalization": scale_payload["data_normalization"],
+            "conditioning_normalization": scale_payload["conditioning_normalization"],
+            "num_continuous": NUM_CONTINUOUS,
+            "station_emb_dim": STATION_EMB_DIM,
+            "include_station_id": bool(args.include_station_id),
+            "num_channels": num_channels,
+            "channel_emb_dim": CHANNEL_EMB_DIM,
+            "batch_size": BATCH_SIZE,
+            "lr": LR,
+            "weight_decay": WEIGHT_DECAY,
+            "base_channels": BASE_CHANNELS,
+            "layers_per_block": LAYERS_PER_BLOCK,
+            "stft_freq_bins": int(data_shape[1]) if args.data_mode == "stft" else None,
+            "stft_time_bins": int(data_shape[2]) if args.data_mode == "stft" else None,
+            # A complete, checkpoint-local record of the embedding export is the
+            # source of truth at inference time. Never rely on a future mutable
+            # embeddings/source.json when reconstructing this model.
+            "embedding_provenance": embedding_provenance,
+            "embedding_scale": scale_payload,
+            "split": {
+                "split_seed": int(args.split_seed),
+                "val_fraction": float(val_fraction),
+                "train_indices": train_indices,
+                "val_indices": val_indices,
+                "held_out_indices": held_out_indices,
+                "held_out_station_ids": held_out_station_ids,
+            },
+            "mappings": index_mappings,
+        }
+        if checkpoint_metadata is not None:
+            training_config["checkpoint_metadata"] = checkpoint_metadata
+        with (save_path / "training_config.json").open("w", encoding="utf-8") as handle:
+            json.dump(training_config, handle, indent=2)
+        # Sidecar copies make provenance discoverable without parsing a large
+        # training_config and keep the checkpoint self-contained when embeddings
+        # are regenerated for a subsequent experiment.
+        with (save_path / "embedding_source.json").open("w", encoding="utf-8") as handle:
+            json.dump(portable_embedding_source, handle, indent=2)
+        with (save_path / "embedding_scale.json").open("w", encoding="utf-8") as handle:
+            json.dump(scale_payload, handle, indent=2)
+        if replace_existing:
+            replace_checkpoint_directory(save_path, ckpt_path)
+    except BaseException:
+        if replace_existing and save_path.exists():
+            shutil.rmtree(save_path)
+        raise
     print(f"Checkpoint saved to {ckpt_path}")
 
 
@@ -1202,6 +1398,20 @@ def _evaluate(loader) -> float:
 # --- Training Loop ---
 embedding_shape = data_shape
 global_step = 0
+best_val_loss = None
+best_val_epoch = None
+best_val_model_path = best_validation_checkpoint_path(
+    CHECKPOINT_ROOT, str(wb.id) if wb is not None else None
+)
+# A named experiment directory can be reused across independent runs.  Do not
+# let a previous run's best checkpoint masquerade as this run's selection when
+# validation is disabled or never produces a finite loss.
+if best_val_model_path.exists():
+    if best_val_model_path.is_dir():
+        shutil.rmtree(best_val_model_path)
+    else:
+        best_val_model_path.unlink()
+    print(f"Removed stale best validation checkpoint at {best_val_model_path}")
 for epoch in range(NUM_EPOCHS):
     model.train()
     epoch_loss = 0.0
@@ -1252,6 +1462,41 @@ for epoch in range(NUM_EPOCHS):
         writer.add_scalar("Loss/val", val_loss, epoch)
         if wb is not None:
             wb.log({"Loss/val": val_loss}, step=((epoch + 1) * len(dataloader)))
+        if is_strictly_better_validation_loss(val_loss, best_val_loss):
+            best_val_loss = val_loss
+            best_val_epoch = epoch + 1
+            _save_checkpoint(
+                "best_val",
+                checkpoint_metadata={
+                    "selection_metric": "Loss/val",
+                    "selection_goal": "minimize",
+                    "best_val_loss": float(best_val_loss),
+                    "best_val_epoch": int(best_val_epoch),
+                    "checkpoint_path": str(best_val_model_path),
+                    "tie_policy": "strict_improvement_earliest_epoch_retained",
+                },
+                checkpoint_path=best_val_model_path,
+                replace_existing=True,
+            )
+            print(
+                f"New best validation checkpoint at epoch {best_val_epoch}: "
+                f"Loss/val={best_val_loss:.6f} -> {best_val_model_path}"
+            )
+            writer.add_scalar("Loss/val_best", best_val_loss, epoch)
+            if wb is not None:
+                best_val_payload = {
+                    "Loss/val_best": best_val_loss,
+                    "Checkpoint/best_val_epoch": best_val_epoch,
+                    "Checkpoint/best_val_path": str(best_val_model_path),
+                }
+                wb.log(best_val_payload, step=((epoch + 1) * len(dataloader)))
+                wb.summary.update(
+                    {
+                        "best_val_loss": best_val_loss,
+                        "best_val_epoch": best_val_epoch,
+                        "best_val_checkpoint": str(best_val_model_path),
+                    }
+                )
 
     if held_out_dataloader is not None and VAL_EVERY_N_EPOCHS > 0 and (
         epoch + 1
@@ -1271,10 +1516,66 @@ for epoch in range(NUM_EPOCHS):
         _save_checkpoint(f"epoch_{epoch + 1}")
         _cleanup_checkpoints("epoch_*", 3)
 
-# --- Save model ---
-writer.close()
-if wb is not None:
-    wb.finish()
-final_model_path = CHECKPOINT_ROOT / "unet2d"
-_save_checkpoint("unet2d")
+# --- Save model and run the checkpoint-bound evaluation suite ---
+final_model_path = run_checkpoint_path(
+    CHECKPOINT_ROOT, "unet2d", str(wb.id) if wb is not None else None
+)
+_save_checkpoint("unet2d", checkpoint_path=final_model_path)
 print(f"Model saved to {final_model_path}")
+if wb is not None:
+    wb.summary.update({"final_checkpoint": str(final_model_path)})
+evaluation_model_path = select_evaluation_checkpoint(
+    best_val_model_path, best_val_loss, final_model_path
+)
+if evaluation_model_path == best_val_model_path:
+    print(
+        f"Final evaluation will use best validation checkpoint from epoch {best_val_epoch}: "
+        f"{evaluation_model_path}"
+    )
+else:
+    print("No finite validation checkpoint was saved; final evaluation will use the final model.")
+
+try:
+    if wb is not None and args.run_final_evaluation:
+        # The evaluators invoke their existing CLI entry points so their standalone
+        # behavior remains unchanged.  The runner records individual failures and
+        # continues through independent methods; W&B is deliberately finished only
+        # after all images/statuses have been logged.
+        project_root = Path(__file__).resolve().parents[2]
+        eval_output_root = evaluation_run_output_root(
+            project_root,
+            TRAINING_TYPE,
+            EXPERIMENT_NAME or str(wb.name or "default"),
+            str(wb.id),
+        )
+        wb.summary.update({"evaluation_output_root": str(eval_output_root)})
+        run_final_evaluation(
+            project_root,
+            evaluation_model_path.resolve(),
+            wb,
+            wandb.Image,
+            embeddings_dir=EMBEDDINGS_DIR,
+            output_root=eval_output_root,
+        )
+except Exception as exc:
+    # Evaluation is post-training diagnostics: an orchestration/logging bug
+    # must not turn a successfully saved model into a failed training run.
+    # (KeyboardInterrupt and SystemExit intentionally inherit BaseException,
+    # so they are never swallowed here.)
+    print(f"[train] final evaluation orchestration failed: {exc}")
+    if wb is not None:
+        try:
+            wb.log(
+                {
+                    "Evaluation/status": "failed",
+                    "Evaluation/orchestration_error": str(exc)[-4000:],
+                }
+            )
+        except Exception as log_exc:
+            print(f"[train] could not record evaluation failure in W&B: {log_exc}")
+finally:
+    try:
+        writer.close()
+    finally:
+        if wb is not None:
+            wb.finish()

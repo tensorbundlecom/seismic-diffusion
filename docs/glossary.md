@@ -1,6 +1,6 @@
 # Glossary
 
-**Last updated:** 2026-08-22
+**Last updated:** 2026-08-26
 
 ## TL;DR
 
@@ -28,9 +28,17 @@ The diffusion input transform `(embedding - mean) / std`. The mean and standard 
 
 The standardization of numeric conditioning features (such as event/site properties) using final training rows only. Categorical station IDs are handled separately by a learned embedding table when enabled.
 
+### Diffusion architecture metadata
+
+The saved U-Net width and depth configuration, including `base_channels` and `layers_per_block`, stored with a diffusion checkpoint. It identifies the architecture needed to load that checkpoint; `base_channels` must be a positive multiple of 32 because the Diffusers U-Net uses GroupNorm.
+
 ### Embedding provenance
 
 The checkpoint-recorded snapshot of the embedding export contract: source identity, AE checkpoint, AE normalization, STFT configuration, channels, count, and latent shape.
+
+### Provenance-compatible AE/diffusion pair
+
+An autoencoder and latent diffusion checkpoint explicitly connected by the diffusion checkpoint's saved embedding provenance. Matching latent tensor shapes alone do not create this compatibility: the diffusion model was trained in the selected AE's specific latent space.
 
 ### Schema-v2 checkpoint
 

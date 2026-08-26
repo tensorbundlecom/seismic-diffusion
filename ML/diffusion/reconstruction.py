@@ -17,6 +17,9 @@ from typing import Any, Mapping, Optional
 
 import numpy as np
 
+from ML.diffusion.waveform_domain import resolve_waveform_domain
+from ML.diffusion.embedding_paths import resolve_project_path
+
 
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
@@ -68,6 +71,7 @@ class ReconstructionSpec:
     source_identity: str = "legacy"
     source_origin: str = "legacy"
     amplitude_epsilon: float = 1.0
+    waveform_domain: str = "instrument_counts"
 
     @property
     def uses_global_normalization(self) -> bool:
@@ -88,6 +92,7 @@ class ReconstructionSpec:
             "amplitude_epsilon": self.amplitude_epsilon,
             "ae_checkpoint": self.ae_checkpoint,
             "source_identity": self.source_identity,
+            "waveform_domain": self.waveform_domain,
         }
         return hashlib.sha256(_canonical_json(payload).encode()).hexdigest()[:12]
 
@@ -101,11 +106,14 @@ class ReconstructionSpec:
             "ae_checkpoint": self.ae_checkpoint,
             "source_identity": self.source_identity,
             "source_origin": self.source_origin,
+            "waveform_domain": self.waveform_domain,
         }
 
 
 def _validate_spec(fields: Mapping[str, Any], ae_checkpoint: Optional[str], *, origin: str,
-                   identity_payload: Mapping[str, Any]) -> ReconstructionSpec:
+                   identity_payload: Mapping[str, Any],
+                   waveform_domain: Optional[str] = None,
+                   ae_name: Optional[str] = None) -> ReconstructionSpec:
     mode = fields.get("mode") or "per_event"
     if mode not in {"global", "per_event"}:
         raise ValueError(f"Unsupported AE normalization mode {mode!r} from {origin}.")
@@ -130,14 +138,18 @@ def _validate_spec(fields: Mapping[str, Any], ae_checkpoint: Optional[str], *, o
         lo = hi = None
         amplitude_epsilon = 1.0
     identity = hashlib.sha256(_canonical_json(identity_payload).encode()).hexdigest()[:16]
+    resolved_checkpoint = (
+        str(resolve_project_path(ae_checkpoint, ae_name=ae_name)) if ae_checkpoint else None
+    )
     return ReconstructionSpec(
         mode=mode,
-        ae_checkpoint=ae_checkpoint,
+        ae_checkpoint=resolved_checkpoint,
         global_min=lo,
         global_max=hi,
         amplitude_epsilon=amplitude_epsilon,
         source_identity=identity,
         source_origin=origin,
+        waveform_domain=resolve_waveform_domain(waveform_domain),
     )
 
 
@@ -146,6 +158,7 @@ def resolve_reconstruction_spec(
     *,
     embeddings_source_path: str | Path | None = None,
     ae_checkpoint_override: str | Path | None = None,
+    waveform_domain_override: str | None = None,
 ) -> ReconstructionSpec:
     """Resolve AE normalization, preferring the checkpoint's provenance snapshot.
 
@@ -165,6 +178,13 @@ def resolve_reconstruction_spec(
                 fields, str(ae_ckpt) if ae_ckpt else None,
                 origin="diffusion checkpoint embedding_provenance",
                 identity_payload=dict(provenance),
+                waveform_domain=(waveform_domain_override or provenance.get(
+                    "waveform_domain", diffusion_config.get("waveform_domain")
+                )),
+                ae_name=(provenance.get("ae_name") or (
+                    provenance.get("source", {}).get("ae_name")
+                    if isinstance(provenance.get("source"), Mapping) else None
+                )),
             )
 
     source = None
@@ -179,6 +199,10 @@ def resolve_reconstruction_spec(
                     fields, str(ae_ckpt) if ae_ckpt else None,
                     origin=f"compatibility source file {path}",
                     identity_payload=source,
+                    waveform_domain=(waveform_domain_override or source.get(
+                        "waveform_domain", diffusion_config.get("waveform_domain")
+                    )),
+                    ae_name=source.get("ae_name"),
                 )
 
     ae_ckpt = ae_checkpoint_override
@@ -193,6 +217,7 @@ def resolve_reconstruction_spec(
         {"mode": "per_event"}, str(ae_ckpt) if ae_ckpt else None,
         origin="legacy per-event default",
         identity_payload={"ae_checkpoint": str(ae_ckpt) if ae_ckpt else None, "mode": "per_event"},
+        waveform_domain=(waveform_domain_override or diffusion_config.get("waveform_domain")),
     )
 
 
@@ -244,16 +269,67 @@ def postprocess_griffinlim_waveform(wave: np.ndarray, spec: ReconstructionSpec,
     return wave
 
 
+_CHECKPOINT_MODEL_ARTIFACTS = (
+    # Diffusers UNet architecture and weights.  Both safetensors and PyTorch
+    # binary checkpoints are supported because save_pretrained can be
+    # configured either way.
+    "config.json",
+    "diffusion_pytorch_model.safetensors",
+    "diffusion_pytorch_model.bin",
+    "pytorch_model.bin",
+    # The wrapper's learned conditioning embedding and the inference schedule
+    # also affect every generated waveform.
+    "station_embedding.pt",
+    "scheduler_config.json",
+)
+
+
+def checkpoint_model_identity(checkpoint_dir: str | Path) -> str:
+    """SHA-256 identity of the checkpoint artifacts that affect sampling.
+
+    A checkpoint directory is commonly reused at ``.../unet2d`` between
+    training runs.  Path/config-only cache names would then silently reuse
+    samples from the previous weights.  Hash only the model, wrapper, and
+    scheduler artifacts rather than every file in the directory, so logs and
+    provenance sidecars do not invalidate expensive waveform caches.
+    """
+    checkpoint_dir = Path(checkpoint_dir).resolve()
+    artifacts = [checkpoint_dir / name for name in _CHECKPOINT_MODEL_ARTIFACTS]
+    artifacts = [path for path in artifacts if path.is_file()]
+    if not artifacts:
+        expected = ", ".join(_CHECKPOINT_MODEL_ARTIFACTS)
+        raise FileNotFoundError(
+            f"No model artifacts found in checkpoint {checkpoint_dir}; expected one of: {expected}."
+        )
+
+    digest = hashlib.sha256()
+    for path in artifacts:
+        # Include the filename as well as bytes: moving a scheduler config into
+        # a weight filename must not retain the same cache identity.
+        digest.update(path.name.encode("utf-8"))
+        digest.update(b"\0")
+        try:
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except OSError as exc:
+            raise ValueError(f"Could not hash checkpoint artifact {path}: {exc}") from exc
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def diffusion_cache_tag(checkpoint_dir: str | Path, diffusion_config: Mapping[str, Any],
                         reconstruction: ReconstructionSpec) -> str:
     """Content-addressed cache identity for generated waveform artifacts."""
-    checkpoint_dir = str(Path(checkpoint_dir).resolve())
-    # The config is cheap to hash and changes when the training contract does;
-    # the path distinguishes separately trained checkpoints with the same cfg.
+    checkpoint_dir = Path(checkpoint_dir).resolve()
+    # The model-artifact identity is essential: the final checkpoint directory
+    # is intentionally reused by training, so its path/config can stay stable
+    # while its learned weights change.
     payload = {
-        "diffusion_checkpoint": checkpoint_dir,
+        "diffusion_checkpoint": str(checkpoint_dir),
         "training_config": dict(diffusion_config),
         "reconstruction": reconstruction.as_dict(),
+        "model_artifacts_sha256": checkpoint_model_identity(checkpoint_dir),
     }
     return hashlib.sha256(_canonical_json(payload).encode()).hexdigest()[:12]
 

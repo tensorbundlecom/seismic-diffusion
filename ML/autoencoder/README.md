@@ -1,10 +1,10 @@
 # Seismic Autoencoder Training
 
-**Last updated:** 2026-08-22
+**Last updated:** 2026-08-25
 
 ## TL;DR
 
-`train.py` (VAE) and `train_cvae.py` (CVAE) can give a run a stable `--name` and normalize STFT magnitudes globally with `--global_normalization`. New runs use the invertible transform `log(magnitude + amplitude_epsilon)`; the default epsilon `1e-12` prevents physical acceleration in `m/s^2` from collapsing near zero. Global bounds are fitted on the training split only. Embedding export reads the complete saved transform, while legacy checkpoints without epsilon retain their original `log1p` behavior.
+`train.py` (VAE) and `train_cvae.py` (CVAE) can give a run a stable `--name` and normalize STFT magnitudes globally with `--global_normalization`. New runs use the invertible transform `log(magnitude + amplitude_epsilon)`: the omitted epsilon is domain-aware—`1.0` for `instrument_counts` (the legacy `log1p` contract) and `1e-12` for `physical_acceleration` in `m/s^2`. Global bounds are fitted on the training split only. When enabled, `train.py` also routes PhaseNet perceptual loss by waveform domain and saves the resolved input mode with the run configuration.
 
 This directory contains code for training a convolutional autoencoder on seismic waveform data converted to STFT spectrograms.
 
@@ -77,10 +77,15 @@ For response-corrected acceleration, use a fresh run name and the physical archi
 ```bash
 python train.py \
   --data_dir ../../data/physical_waveforms_snr2_2-15hz \
+  --waveform_domain physical_acceleration \
   --name vae-global-physical-v2 \
   --global_normalization --amplitude_epsilon 1e-12 \
   --channels HH HN EH BH
 ```
+
+`--waveform_domain` is checkpoint provenance, not a transform. Use
+`instrument_counts` for sensor-response/count archives and
+`physical_acceleration` for response-removed acceleration in `m/s^2`.
 
 ### 6. Named global-normalized CVAE run
 
@@ -97,6 +102,7 @@ The CVAE uses its own default roots: `checkpoints_cvae/cvae-global-v1/` and `log
 
 ### Data Arguments
 - `--data_dir`: Path to filtered waveforms directory (default: `../../data/filtered_waveforms`)
+- `--waveform_domain`: Input-trace provenance: `instrument_counts` (default) or response-removed `physical_acceleration` in `m/s^2`. It determines the omitted epsilon default and, when PhaseNet loss is enabled, its input contract.
 - `--channels`: Channel types to include (default: `HH`)
 
 ### STFT Arguments
@@ -104,7 +110,7 @@ The CVAE uses its own default roots: `checkpoints_cvae/cvae-global-v1/` and `log
 - `--noverlap`: Number of points to overlap between segments (default: 192)
 - `--nfft`: Length of the FFT used (default: 256)
 - `--global_normalization`: Use one shared min/max for all post-resize log-magnitude values. It is fitted on the training split only. Without this flag, per-event, per-component min/max normalization remains the default.
-- `--amplitude_epsilon`: Positive floor in `log(magnitude + epsilon)` (default `1e-12`). Legacy checkpoints lacking this field imply `1.0`, exactly reproducing `log1p(magnitude)`.
+- `--amplitude_epsilon`: Optional positive floor in `log(magnitude + epsilon)`. When omitted, it resolves to `1.0` for `instrument_counts`, exactly reproducing legacy `log1p(magnitude)`, and to `1e-12` for `physical_acceleration`. An explicit value takes precedence and the resolved value is saved in checkpoints. Legacy checkpoints lacking this field imply `1.0`.
 
 ### Global Normalization Contract
 
@@ -121,6 +127,15 @@ magnitude = max(exp(log_magnitude) - amplitude_epsilon, 0)
 Values are not clipped. Therefore validation or test values may lie outside `[0, 1]`, which is intentional and avoids leakage from those splits into the fitted range. A zero fitted range maps all values to zero.
 
 The run configuration and checkpoints persist `normalization_mode`, `amplitude_epsilon`, `global_min`, `global_max`, and `run_name`. Keep the checkpoint and these statistics together whenever the model is used downstream. Training stops immediately if an input, VAE activation, perceptual loss, or objective becomes non-finite.
+
+### PhaseNet perceptual-loss contract
+
+With `--use_phasenet_perceptual`, `train.py` selects the PhaseNet input transform from `--waveform_domain` and persists the resolved `phasenet_input_mode` in the run configuration and checkpoints.
+
+- `instrument_counts` always uses the exact legacy v1 input: `expm1(normalized.clamp_min(0))`. This intentionally remains true even when `--global_normalization` is enabled; the values are not first denormalized with global bounds.
+- `physical_acceleration` requires `--global_normalization` and valid saved `global_min`/`global_max` bounds. PhaseNet receives the physical linear magnitude reconstructed by the exact inverse: `max(exp(normalized * (global_max - global_min) + global_min) - amplitude_epsilon, 0)`.
+
+Consequently, a physical-acceleration PhaseNet run without global normalization fails before optional PhaseNet loading can fall back to the base loss. A count-domain run remains compatible with the historical PhaseNet preprocessing regardless of whether it uses per-event or global normalization.
 
 #### Progress and normalization cache
 
@@ -180,20 +195,48 @@ For a named run, the matching TensorBoard location is `logs/<run-name>/`; an unn
 
 ### Preparing diffusion embeddings
 
-`ML/diffusion/create_embeddings.py` defaults to the latest **timestamped** AE checkpoint and does not search named run directories. For any named run, pass its checkpoint explicitly. For example, from `ML/diffusion`:
+`ML/diffusion/create_embeddings.py` defaults to the latest **timestamped** AE checkpoint and does not search named run directories. For any named run, pass its checkpoint explicitly. Each export is isolated under the embedding root by the selected checkpoint's parent directory (the AE run name):
+
+```text
+ML/diffusion/embeddings/<AE run name>/
+  embeddings.pt
+  metadata.json
+  source.json
+```
+
+For example, from `ML/diffusion`, export the physical-acceleration AE:
 
 ```bash
 python create_embeddings.py \
-  --data_dir ../../data/filtered_waveforms_snr2_2-15hz \
+  --data_dir ../../data/physical_waveforms_snr2_2-15hz \
   --waveform_summary ../../data/waveform_summary.csv \
-  --ae_checkpoint ../autoencoder/checkpoints/vae-global-v1/best_model.pt
+  --ae_checkpoint ../autoencoder/checkpoints/vae-global-physical-v2/best_model.pt
 ```
+
+This writes `embeddings/vae-global-physical-v2/`; `--output_dir` changes only the root, not the AE-specific subdirectory. Export refuses to replace an existing export for the same AE. Pass `--overwrite` only when intentionally regenerating that AE's three core artifacts (`embeddings.pt`, `metadata.json`, and `source.json`). Replacement is staged as a complete export before installation, while export-local station artifacts are preserved. Exports for different AE names coexist safely.
+
+`source.json` records `ae_name`, the exact AE checkpoint, and waveform domain in addition to the preprocessing and normalization contract. Select the complete export directory when training diffusion, so the selected source determines the matching AE and domain:
+
+```bash
+python train.py \
+  --data_mode latent \
+  --embeddings_dir embeddings/vae-global-physical-v2
+```
+
+The station helper scripts use the same directory. Prepare station locations for the selected export before diffusion training; also compute Vs30 there when that conditioning feature is enabled:
+
+```bash
+python fetch_station_locations.py --embeddings_dir embeddings/vae-global-physical-v2
+python compute_station_vs30.py --embeddings_dir embeddings/vae-global-physical-v2
+```
+
+`train.py` continues to accept the legacy flat `embeddings/` directory by default for older exports. New workflows should always pass an AE-specific directory explicitly.
 
 For a globally normalized AE, embedding export reads `normalization_mode`, `amplitude_epsilon`, `global_min`, and `global_max` from the selected checkpoint and applies the exact training transform. It never fits bounds over the export dataset. A global-normalized checkpoint without usable bounds fails rather than silently refitting. Checkpoints created before epsilon was recorded default to `1.0`, preserving their former `log1p` transform.
 
 Unless explicitly supplied on the command line, export uses the checkpoint's saved channel groups, resize geometry (`target_freq_bins` and `target_time_bins`), resampling rate, and duration. The STFT window settings (`nperseg`, `noverlap`, and `nfft`) always come from the checkpoint configuration. Legacy checkpoints fall back to `HH`, 100 Hz, and 70 seconds where those saved values do not exist. CLI values for `--channels`, `--target_freq_bins`, `--target_time_bins`, `--resample_hz`, and `--target_seconds` override the corresponding saved settings; use overrides only when they intentionally match the AE's training input contract.
 
-The output `embeddings/source.json` records the selected checkpoint, resolved STFT settings, resolved channels, normalization mode, amplitude epsilon, and global bounds (or `null` bounds for per-event normalization), alongside the embedding count and shape.
+The output `embeddings/<AE run name>/source.json` records the AE name and selected checkpoint, waveform domain, resolved STFT settings, resolved channels, normalization mode, amplitude epsilon, and global bounds (or `null` bounds for per-event normalization), alongside the embedding count and shape. For legacy AE checkpoints without domain provenance, pass `--waveform_domain` explicitly when exporting physical acceleration; otherwise the backward-compatible default is `instrument_counts`.
 
 ## Example Training Sessions
 
