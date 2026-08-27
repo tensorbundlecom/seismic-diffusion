@@ -58,9 +58,9 @@ def fit_reference(mag, vs30, r_hyp, log_y):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    parser.add_argument("--gmm", choices=sorted(GMM_REGISTRY), default="edwardsfah13",
+    parser.add_argument("--gmm", choices=["none", *sorted(GMM_REGISTRY)], default="edwardsfah13",
                         help="GMM population to include (its predictions must "
-                             "already be in the peaks cache).")
+                             "already be in the peaks cache), or 'none'.")
     parser.add_argument("--gmm_min_mag", type=float, default=None,
                         help="Magnitude floor (default: the model's validity floor).")
     parser.add_argument("--obs", choices=["e", "rot"], default="e",
@@ -88,37 +88,46 @@ def main():
         path = caches[-1]
     cache = dict(np.load(path))
 
-    gmm = GMM_REGISTRY[args.gmm]
-    min_mag = args.gmm_min_mag if args.gmm_min_mag is not None else gmm["min_mag"]
-    pga_gmm_key, pgv_gmm_key = f"pga_gmm_{args.gmm}", f"pgv_gmm_{args.gmm}"
-    if pga_gmm_key not in cache:
-        raise KeyError(f"No {args.gmm} predictions in {path.name}; run "
-                       f"evaluate_peak_amplitudes.py compute --gmm {args.gmm} first.")
+    gmm = None if args.gmm == "none" else GMM_REGISTRY[args.gmm]
+    if gmm is not None:
+        min_mag = args.gmm_min_mag if args.gmm_min_mag is not None else gmm["min_mag"]
+        pga_gmm_key, pgv_gmm_key = f"pga_gmm_{args.gmm}", f"pgv_gmm_{args.gmm}"
+        if pga_gmm_key not in cache:
+            raise KeyError(f"No {args.gmm} predictions in {path.name}; run "
+                           f"evaluate_peak_amplitudes.py compute --gmm {args.gmm} first.")
 
     obs_suffix = "e" if args.obs == "e" else "rot"
     keys = {
-        "PGA": (f"pga_obs_{obs_suffix}", "pga_synth_e", pga_gmm_key),
-        "PGV": (f"pgv_obs_{obs_suffix}", "pgv_synth_e", pgv_gmm_key),
+        "PGA": [f"pga_obs_{obs_suffix}", "pga_synth_e"],
+        "PGV": [f"pgv_obs_{obs_suffix}", "pgv_synth_e"],
     }
+    if gmm is not None:
+        keys["PGA"].append(pga_gmm_key)
+        keys["PGV"].append(pgv_gmm_key)
 
     # Matched record set: every population defined on every record.
-    sel = (cache["in_val"].astype(bool) & (cache["mag"] >= min_mag)
-           & (cache["vs30"] >= VS30_RANGE[0]) & (cache["vs30"] <= VS30_RANGE[1]))
+    sel = cache["in_val"].astype(bool)
+    if gmm is not None:
+        sel &= ((cache["mag"] >= min_mag)
+                & (cache["vs30"] >= VS30_RANGE[0])
+                & (cache["vs30"] <= VS30_RANGE[1]))
     for im_keys in keys.values():
         for key in im_keys:
             sel &= np.isfinite(cache[key]) & (cache[key] > 0)
     n = int(sel.sum())
     if n < 10:
         raise RuntimeError(f"Only {n} matched records in {path.name}.")
+    selection = f", M>={min_mag:g}" if gmm is not None else ""
     print(f"[eval] {path.name}: {n} matched records "
-          f"(test split, M>={min_mag:g}, obs measure: {args.obs})")
+          f"(test split{selection}, obs measure: {args.obs})")
 
     mag, vs30, r_hyp = cache["mag"][sel], cache["vs30"][sel], cache["r_hyp"][sel]
     populations = [
         ("Real data", REAL_COLOR),
         ("GWM synthetics", GWM_COLOR),
-        (gmm["label"], GMM_COLOR),
     ]
+    if gmm is not None:
+        populations.append((gmm["label"], GMM_COLOR))
 
     fig, axes = plt.subplots(
         2, 2, figsize=(11, 6.5), sharex="col",
@@ -126,14 +135,14 @@ def main():
     )
     fig.patch.set_facecolor("white")
 
-    for col, (im, (obs_key, synth_key, gmm_key)) in enumerate(keys.items()):
+    for col, (im, im_keys) in enumerate(keys.items()):
+        obs_key, synth_key = im_keys[:2]
         coef, ref = fit_reference(mag, vs30, r_hyp,
                                   np.log10(cache[obs_key][sel]))
         print(f"[eval] fitted reference: log10({im}) = {coef[0]:+.4f} "
               f"{coef[1]:+.4f}*M {coef[2]:+.4f}*log10(Vs30) "
               f"{coef[3]:+.4f}*log10(R)")
-        residuals = [np.log10(cache[key][sel]) - ref
-                     for key in (obs_key, synth_key, gmm_key)]
+        residuals = [np.log10(cache[key][sel]) - ref for key in im_keys]
         for (name, _), res in zip(populations, residuals):
             print(f"[eval]   {im} {name}: sigma={res.std():.3f}  "
                   f"median={np.median(res):+.3f}")
@@ -153,8 +162,9 @@ def main():
         ax.legend(fontsize=8, frameon=True, edgecolor=GRID)
 
         ax = axes[1, col]
+        positions = list(range(1, len(residuals) + 1))
         box = ax.boxplot(
-            residuals[::-1], vert=False, positions=[1, 2, 3], widths=0.55,
+            residuals[::-1], vert=False, positions=positions, widths=0.55,
             patch_artist=True,
             flierprops=dict(marker="x", markersize=3, markeredgecolor=MUTED),
             medianprops=dict(color=INK, lw=1.2),
@@ -164,7 +174,7 @@ def main():
             patch.set_facecolor(color)
             patch.set_alpha(0.75)
             patch.set_edgecolor(INK)
-        ax.set_yticks([3, 2, 1])
+        ax.set_yticks(positions[::-1])
         ax.set_yticklabels([p[0] for p in populations], fontsize=8, color=INK)
         ax.axvline(0.0, color=GRID, lw=0.8, zorder=0)
         ax.set_xlim(-args.xlim, args.xlim)
@@ -177,10 +187,10 @@ def main():
                 spine.set_color(MUTED)
 
     obs_name = "E component" if args.obs == "e" else "RotD50"
+    mag_title = f", M$\\geq${min_mag:g}" if gmm is not None else ""
     fig.suptitle(
-        f"Peak amplitude residuals vs OLS reference — test split, "
-        f"M$\\geq${min_mag:g}, {obs_name} (n={n:,})",
-        color=INK, fontsize=12,
+        f"Peak amplitude residuals vs OLS reference — test split{mag_title}, "
+        f"{obs_name} (n={n:,})", color=INK, fontsize=12,
     )
     fig.tight_layout(rect=[0, 0, 1, 0.95])
 

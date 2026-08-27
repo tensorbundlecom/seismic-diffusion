@@ -392,9 +392,14 @@ def run_compute(args):
                   f"({rate:.1f} samples/s, ETA {eta:.0f} min)")
 
     # ── GMM curves on the same grid ──────────────────────────────────────────
-    gmm = ATT_GMM_REGISTRY[args.gmm]
-    gmm_med, gmm_ln_std = gmm["predict"](scen_mag, r_hyp_grid, r_epi_grid,
-                                         sta_vs30, periods)
+    if args.gmm == "none":
+        gmm_med = np.full((len(periods), len(r_hyp_grid)), np.nan)
+        gmm_ln_std = np.full_like(gmm_med, np.nan)
+    else:
+        gmm = ATT_GMM_REGISTRY[args.gmm]
+        gmm_med, gmm_ln_std = gmm["predict"](
+            scen_mag, r_hyp_grid, r_epi_grid, sta_vs30, periods
+        )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     np.savez(sweep_path, r_hyp=r_hyp_grid, periods=np.asarray(periods),
@@ -425,9 +430,11 @@ def run_plot(args):
     sweep = dict(np.load(latest("att_sweep_*.npz", args.sweep_cache),
                          allow_pickle=True))
     periods = sweep["periods"]
-    gmm_label = ATT_GMM_REGISTRY[str(sweep["gmm_name"])]["label"]
+    gmm_name = str(sweep["gmm_name"])
+    gmm_label = (ATT_GMM_REGISTRY[gmm_name]["label"]
+                 if gmm_name != "none" else None)
     print(f"[eval] plotting: {len(real['indices'])} records, "
-          f"{sweep['sa_synth'].shape[1]} realizations/distance, gmm={sweep['gmm_name']}")
+          f"{sweep['sa_synth'].shape[1]} realizations/distance, gmm={gmm_name}")
 
     fig, axes = plt.subplots(1, len(periods), figsize=(6.0 * len(periods), 5.0),
                              sharex=True)
@@ -475,11 +482,12 @@ def run_plot(args):
                         alpha=0.22, lw=0, label="GWM-std.")
         ax.plot(sweep["r_hyp"], med, color=INK, lw=1.6, label="GWM-med.", zorder=5)
 
-        gm, gs = sweep["gmm_med"][col], sweep["gmm_ln_std"][col]
-        ax.plot(sweep["r_hyp"], gm, color=GMM_COLOR, lw=1.6, label=gmm_label)
-        for sgn in (-1, 1):
-            ax.plot(sweep["r_hyp"], gm * np.exp(sgn * gs), color=GMM_COLOR,
-                    lw=1.0, ls="--")
+        if gmm_label is not None:
+            gm, gs = sweep["gmm_med"][col], sweep["gmm_ln_std"][col]
+            ax.plot(sweep["r_hyp"], gm, color=GMM_COLOR, lw=1.6, label=gmm_label)
+            for sgn in (-1, 1):
+                ax.plot(sweep["r_hyp"], gm * np.exp(sgn * gs), color=GMM_COLOR,
+                        lw=1.0, ls="--")
 
         ax.set_yscale("log")
         ax.set_xlim(0, data_max * 1.04)
@@ -499,9 +507,10 @@ def run_plot(args):
         for spine in ax.spines.values():
             spine.set_color(MUTED)
 
+    comparison = f" vs {gmm_label}" if gmm_label is not None else ""
     fig.suptitle(
         f"SA attenuation — GWM (M{float(sweep['scen_mag']):g}, station "
-        f"{sweep['station']}) vs {gmm_label} vs data, E component",
+        f"{sweep['station']}){comparison} vs data, E component",
         color=INK, fontsize=12)
     fig.tight_layout(rect=[0, 0, 1, 0.94])
 
@@ -517,9 +526,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     parser.add_argument("stage", choices=["compute", "plot", "all"], nargs="?",
                         default="all")
-    parser.add_argument("--gmm", choices=sorted(ATT_GMM_REGISTRY),
+    parser.add_argument("--gmm", choices=["none", *sorted(ATT_GMM_REGISTRY)],
                         default="edwardsfah13",
-                        help="GMM overlay (median + 1 sigma), swappable.")
+                        help="GMM overlay (median + 1 sigma), or 'none'.")
     parser.add_argument("--mag_lo", type=float, default=2.0)
     parser.add_argument("--mag_hi", type=float, default=3.0)
     parser.add_argument("--scenario_mag", type=float, default=None,

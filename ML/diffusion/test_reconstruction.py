@@ -4,7 +4,27 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from ML.diffusion.reconstruction import ReconstructionSpec, diffusion_cache_tag
+import numpy as np
+
+from ML.diffusion.reconstruction import (
+    ReconstructionSpec,
+    diffusion_cache_tag,
+    scipy_spectrum_to_librosa_magnitude,
+)
+
+
+class STFTAmplitudeContractTests(unittest.TestCase):
+    def test_hann_window_restores_scipy_spectrum_scaling(self):
+        magnitude = np.ones((33, 701), dtype=np.float32)
+
+        converted = scipy_spectrum_to_librosa_magnitude(
+            magnitude,
+            window="hann",
+            win_length=50,
+        )
+
+        np.testing.assert_allclose(converted, 25.0)
+        np.testing.assert_allclose(magnitude, 1.0)
 
 
 class DiffusionCacheTagTests(unittest.TestCase):

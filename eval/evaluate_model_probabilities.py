@@ -293,17 +293,16 @@ def run_plot(args):
     log_sa = np.log10(real["sa"][ok])
     mags, dists = real["mag"][ok], real["r_hyp"][ok]
 
-    # GMM moments at bin centers (cheap -> computed here, so --gmm swaps
-    # without recomputing anything).
-    gmm = ATT_GMM_REGISTRY[args.gmm]
+    gmm = None if args.gmm == "none" else ATT_GMM_REGISTRY[args.gmm]
     mu_gmm = np.full((len(mag_centers), len(dist_centers)), np.nan)
     sg_gmm = np.full_like(mu_gmm, np.nan)
-    for mi, mag_c in enumerate(mag_centers):
-        d_epi = np.sqrt(np.maximum(dist_centers ** 2 - depth ** 2, 1.0))
-        med, ln_std = gmm["predict"](float(mag_c), dist_centers, d_epi,
-                                     sta_vs30, [period])
-        mu_gmm[mi] = np.log10(med[0])
-        sg_gmm[mi] = ln_std[0] / LN10
+    if gmm is not None:
+        for mi, mag_c in enumerate(mag_centers):
+            d_epi = np.sqrt(np.maximum(dist_centers ** 2 - depth ** 2, 1.0))
+            med, ln_std = gmm["predict"](float(mag_c), dist_centers, d_epi,
+                                         sta_vs30, [period])
+            mu_gmm[mi] = np.log10(med[0])
+            sg_gmm[mi] = ln_std[0] / LN10
 
     n_obs = np.zeros_like(mu_gmm)
     p_gmm = np.full_like(mu_gmm, np.nan)
@@ -315,28 +314,36 @@ def run_plot(args):
             n_obs[mi, di] = bsel.sum()
             if bsel.sum() < args.min_bin_count:
                 continue
-            p_gmm[mi, di] = _avg_probability(log_sa[bsel], mu_gmm[mi, di],
-                                             sg_gmm[mi, di])
+            if gmm is not None:
+                p_gmm[mi, di] = _avg_probability(log_sa[bsel], mu_gmm[mi, di],
+                                                 sg_gmm[mi, di])
             p_gwm[mi, di] = _avg_probability(log_sa[bsel],
                                              gwm["mu_gwm"][mi, di],
                                              gwm["sigma_gwm"][mi, di])
 
-    ratio = p_gmm / p_gwm
-    both = np.isfinite(ratio)
-    print(f"[eval] bins with data: {int(both.sum())} of {ratio.size}; "
-          f"GWM better (ratio<1) in {int((ratio[both] < 1).sum())}, "
-          f"{args.gmm} better in {int((ratio[both] > 1).sum())}; "
-          f"median ratio {np.nanmedian(ratio):.2f}")
+    valid_gwm = np.isfinite(p_gwm)
+    if gmm is None:
+        print(f"[eval] bins with data: {int(valid_gwm.sum())} of {p_gwm.size}")
+        panels = [("GWM", p_gwm, "viridis", (0, np.nanmax(p_gwm)), "$P_{GWM}$")]
+    else:
+        ratio = p_gmm / p_gwm
+        both = np.isfinite(ratio)
+        print(f"[eval] bins with data: {int(both.sum())} of {ratio.size}; "
+              f"GWM better (ratio<1) in {int((ratio[both] < 1).sum())}, "
+              f"{args.gmm} better in {int((ratio[both] > 1).sum())}; "
+              f"median ratio {np.nanmedian(ratio):.2f}")
+        pmax = np.nanmax([np.nanmax(p_gmm), np.nanmax(p_gwm)])
+        panels = [
+            (f"{gmm['label']}", p_gmm, "viridis", (0, pmax), "$P_{GMM}$"),
+            ("GWM", p_gwm, "viridis", (0, pmax), "$P_{GWM}$"),
+            (f"Prob. ratio $P_{{GMM}}/P_{{GWM}}$", ratio, "RdBu",
+             None, "ratio"),
+        ]
 
-    fig, axes = plt.subplots(3, 1, figsize=(8.5, 10.5), sharex=True)
+    fig, axes = plt.subplots(len(panels), 1,
+                             figsize=(8.5, 3.8 * len(panels)), sharex=True)
+    axes = np.atleast_1d(axes)
     fig.patch.set_facecolor("white")
-    pmax = np.nanmax([np.nanmax(p_gmm), np.nanmax(p_gwm)])
-    panels = [
-        (f"{gmm['label']}", p_gmm, "viridis", (0, pmax), "$P_{GMM}$"),
-        ("GWM", p_gwm, "viridis", (0, pmax), "$P_{GWM}$"),
-        (f"Prob. ratio $P_{{GMM}}/P_{{GWM}}$", ratio, "RdBu",
-         None, "ratio"),
-    ]
     for ax, (title, grid_vals, cmap, vlim, cbar_label) in zip(axes, panels):
         masked = np.ma.masked_invalid(grid_vals)
         if vlim is None:
@@ -358,11 +365,13 @@ def run_plot(args):
             spine.set_color(MUTED)
     axes[-1].set_xlabel("Hypocentral Distance [km]", color=INK)
 
+    subtitle = ("\n(bottom panel: red = GWM explains the data better)"
+                if gmm is not None else "")
     fig.suptitle(
         f"Average model probabilities, SA(T={period:g}s) — station "
         f"{gwm['station']}, V$_{{S30}}$ {sta_vs30:.0f}$\\pm$"
-        f"{float(gwm['vs30_halfwidth']):.0f} m/s, N$_{{obs}}$={int(n_obs.sum())}\n"
-        f"(bottom panel: red = GWM explains the data better)",
+        f"{float(gwm['vs30_halfwidth']):.0f} m/s, N$_{{obs}}$={int(n_obs.sum())}"
+        f"{subtitle}",
         color=INK, fontsize=11)
     fig.tight_layout(rect=[0, 0, 1, 0.95])
 
@@ -378,9 +387,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     parser.add_argument("stage", choices=["compute", "plot", "all"], nargs="?",
                         default="all")
-    parser.add_argument("--gmm", choices=sorted(ATT_GMM_REGISTRY),
+    parser.add_argument("--gmm", choices=["none", *sorted(ATT_GMM_REGISTRY)],
                         default="edwardsfah13",
-                        help="GMM to score against (plot-time only, swappable).")
+                        help="GMM to score against (plot-time only), or 'none'.")
     parser.add_argument("--period", type=float, default=0.3)
     parser.add_argument("--station", type=str, default=None,
                         help="Scenario station (default: most records in window).")

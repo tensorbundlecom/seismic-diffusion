@@ -21,6 +21,9 @@ from ML.diffusion.waveform_domain import resolve_waveform_domain
 from ML.diffusion.embedding_paths import resolve_project_path
 
 
+STFT_INVERSE_AMPLITUDE_CONTRACT = "scipy-spectrum-to-librosa-v1"
+
+
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
@@ -254,6 +257,32 @@ def decoded_to_magnitude(decoded, spec: ReconstructionSpec, *, legacy_inv_log_ga
     return max(float(np.exp(float(log_magnitude))) - epsilon, 0.0)
 
 
+def scipy_spectrum_to_librosa_magnitude(
+    magnitude: np.ndarray,
+    *,
+    window: str,
+    win_length: int,
+) -> np.ndarray:
+    """Convert SciPy ``stft(..., scaling='spectrum')`` magnitudes for librosa.
+
+    SciPy's spectrum-scaled STFT divides the raw FFT by the analysis-window
+    sum. Librosa's STFT/Griffin-Lim convention does not. The AE was trained on
+    SciPy magnitudes, so restore that window sum before librosa Griffin-Lim or
+    every reconstructed waveform is too small by the same factor.
+    """
+    from scipy.signal import get_window
+
+    win_length = int(win_length)
+    if win_length <= 0:
+        raise ValueError(f"win_length must be positive, got {win_length}.")
+    window_sum = float(np.asarray(get_window(window, win_length, fftbins=True)).sum())
+    if not math.isfinite(window_sum) or window_sum <= 0.0:
+        raise ValueError(
+            f"Window {window!r} with win_length={win_length} has invalid sum {window_sum}."
+        )
+    return np.asarray(magnitude) * window_sum
+
+
 def postprocess_griffinlim_waveform(wave: np.ndarray, spec: ReconstructionSpec,
                                     *, amp_scale: Optional[float] = None,
                                     metric: str = "max") -> np.ndarray:
@@ -329,6 +358,7 @@ def diffusion_cache_tag(checkpoint_dir: str | Path, diffusion_config: Mapping[st
         "diffusion_checkpoint": str(checkpoint_dir),
         "training_config": dict(diffusion_config),
         "reconstruction": reconstruction.as_dict(),
+        "stft_inverse_amplitude_contract": STFT_INVERSE_AMPLITUDE_CONTRACT,
         "model_artifacts_sha256": checkpoint_model_identity(checkpoint_dir),
     }
     return hashlib.sha256(_canonical_json(payload).encode()).hexdigest()[:12]

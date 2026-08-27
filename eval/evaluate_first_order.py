@@ -59,6 +59,7 @@ from ML.diffusion.reconstruction import (               # noqa: E402
     diffusion_cache_tag,
     postprocess_griffinlim_waveform,
     resolve_reconstruction_spec,
+    scipy_spectrum_to_librosa_magnitude,
 )
 from ML.diffusion.waveform_domain import (               # noqa: E402
     INSTRUMENT_COUNTS,
@@ -305,6 +306,11 @@ def _process_synth(args):
             x_new = np.linspace(0.0, 1.0, native_frames)
             m = np.stack([np.interp(x_new, x_old, row) for row in m], axis=0)
 
+        m = scipy_spectrum_to_librosa_magnitude(
+            m,
+            window=GL_WINDOW,
+            win_length=int(STFT_CFG["nperseg"]),
+        )
         wave = librosa.griffinlim(
             m,
             n_iter=int(gl_iters),

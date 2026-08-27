@@ -41,7 +41,11 @@ from ML.diffusion.model import (
 from ML.autoencoder.inference import load_model as _load_ae
 from ML.amplitude.model import AmplitudeMLP
 from ML.diffusion.embedding_paths import resolve_project_path
-from ML.diffusion.reconstruction import decoded_to_magnitude, resolve_reconstruction_spec
+from ML.diffusion.reconstruction import (
+    decoded_to_magnitude,
+    resolve_reconstruction_spec,
+    scipy_spectrum_to_librosa_magnitude,
+)
 from diffusers import DDPMScheduler
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -800,6 +804,11 @@ def griffin_lim_channel(magnitude: np.ndarray, n_iter: int = GRIFFIN_LIM_ITERS, 
         x_new = np.linspace(0.0, 1.0, native_frames)
         mag = np.stack([np.interp(x_new, x_old, row) for row in mag], axis=0)
 
+    mag = scipy_spectrum_to_librosa_magnitude(
+        mag,
+        window=cfg["window"],
+        win_length=cfg["win_length"],
+    )
     gl_kwargs = dict(
         n_iter=cfg["n_iter"],
         hop_length=cfg["hop_length"],

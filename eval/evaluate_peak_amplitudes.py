@@ -402,8 +402,9 @@ def save_cache(path: Path, cache: dict):
 def run_compute(args):
     from obspy.geodetics import gps2dist_azimuth
 
-    gmm = GMM_REGISTRY[args.gmm]
-    min_mag = args.gmm_min_mag if args.gmm_min_mag is not None else gmm["min_mag"]
+    gmm = None if args.gmm == "none" else GMM_REGISTRY[args.gmm]
+    min_mag = (None if gmm is None else
+               args.gmm_min_mag if args.gmm_min_mag is not None else gmm["min_mag"])
 
     metadatas = json.load(open(artifact_path(EMBEDDINGS_DIR, "metadata.json")))
     station_locations = json.load(open(artifact_path(EMBEDDINGS_DIR, "station_locations.json")))
@@ -426,9 +427,10 @@ def run_compute(args):
           f"({len(synth_indices)} samples, channel {channel})")
 
     val_set = set(synth_indices)
-    eligible = {i for i, m in enumerate(metadatas)
-                if float(m["magnitude"]) >= min_mag}
-    if args.scope == "val":
+    eligible = ({i for i, m in enumerate(metadatas)
+                 if float(m["magnitude"]) >= min_mag}
+                if gmm is not None else set())
+    if gmm is not None and args.scope == "val":
         eligible &= val_set
     indices = sorted(val_set | eligible)
     if args.limit and args.limit < len(indices):
@@ -439,9 +441,10 @@ def run_compute(args):
     cache["waveform_domain"] = np.asarray(waveform_domain)
     indices = cache["indices"].tolist()
     n_gmm = sum(1 for i in indices if i in eligible)
+    gmm_summary = (f", {args.gmm} row M>={min_mag:g}, "
+                   f"scope={args.scope}: {n_gmm}" if gmm is not None else "")
     print(f"[eval] records: {len(indices)} total "
-          f"(GWM row: {int(cache['in_val'].sum())}, "
-          f"{args.gmm} row M>={min_mag:g}, scope={args.scope}: {n_gmm})")
+          f"(GWM row: {int(cache['in_val'].sum())}{gmm_summary})")
     synth_row = {idx: j for j, idx in enumerate(synth_indices)}
 
     # Scalar metadata (cheap, recomputed every run).
@@ -517,7 +520,7 @@ def run_compute(args):
 
     # ── GMM pass: median predictions (fast, vectorized, main process) ───────
     rows = np.asarray([j for j, idx in enumerate(indices) if idx in eligible])
-    if rows.size:
+    if gmm is not None and rows.size:
         print(f"[eval] {args.gmm} pass: {rows.size} scenarios")
         pga, pgv = gmm["predict"](
             cache["mag"][rows], cache["r_hyp"][rows],
@@ -574,45 +577,53 @@ def run_plot(args):
     cache = dict(np.load(path))
     print(f"[eval] plotting from {path.name}  (gmm={args.gmm}, set_mode={args.set_mode})")
 
-    gmm = GMM_REGISTRY[args.gmm]
-    min_mag = args.gmm_min_mag if args.gmm_min_mag is not None else gmm["min_mag"]
-    pga_key, pgv_key = f"pga_gmm_{args.gmm}", f"pgv_gmm_{args.gmm}"
-    if pga_key not in cache:
-        raise KeyError(f"No {args.gmm} predictions in {path.name}; "
-                       f"run `compute --gmm {args.gmm}` first.")
+    gmm = None if args.gmm == "none" else GMM_REGISTRY[args.gmm]
+    if gmm is not None:
+        min_mag = args.gmm_min_mag if args.gmm_min_mag is not None else gmm["min_mag"]
+        pga_key, pgv_key = f"pga_gmm_{args.gmm}", f"pgv_gmm_{args.gmm}"
+        if pga_key not in cache:
+            raise KeyError(f"No {args.gmm} predictions in {path.name}; "
+                           f"run `compute --gmm {args.gmm}` first.")
 
     r_hyp = cache["r_hyp"]
     in_val = cache["in_val"].astype(bool)
-    in_gmm = (np.isfinite(cache[pga_key]) & np.isfinite(cache[pgv_key])
-              & (cache["mag"] >= min_mag))
     gwm_label = "Generative waveform model"
-    gmm_label = f"{gmm['label']}, M$\\geq${min_mag:g}"
-    if args.set_mode == "all":
-        gwm_sel, gmm_sel = in_val, in_gmm
-    elif args.set_mode == "val":
-        gwm_sel, gmm_sel = in_val, in_gmm & in_val
-        gmm_label += ", test split"
-    else:  # matched: identical record set in every panel
-        finite = np.ones(in_val.shape, dtype=bool)
-        for key in PEAK_KEYS:
-            finite &= np.isfinite(cache[key]) & (cache[key] > 0)
-        gwm_sel = gmm_sel = in_val & in_gmm & finite
-        gwm_label += f", M$\\geq${min_mag:g}"
-        gmm_label += ", test split"
-
-    gmm_bin_km = args.gmm_bin_km if args.gmm_bin_km else args.bin_km
+    gwm_sel = in_val
     panels = [
         ("a)", "PGA", "pga_obs_e", "pga_synth_e", gwm_sel,
          gwm_label, GWM_COLOR, "GWM", args.bin_km),
         ("b)", "PGV", "pgv_obs_e", "pgv_synth_e", gwm_sel,
          gwm_label, GWM_COLOR, "GWM", args.bin_km),
-        ("c)", "PGA", "pga_obs_rot", pga_key, gmm_sel,
-         gmm_label, GMM_COLOR, "GMM", gmm_bin_km),
-        ("d)", "PGV", "pgv_obs_rot", pgv_key, gmm_sel,
-         gmm_label, GMM_COLOR, "GMM", gmm_bin_km),
     ]
+    if gmm is not None:
+        in_gmm = (np.isfinite(cache[pga_key]) & np.isfinite(cache[pgv_key])
+                  & (cache["mag"] >= min_mag))
+        gmm_label = f"{gmm['label']}, M$\\geq${min_mag:g}"
+        if args.set_mode == "all":
+            gwm_sel, gmm_sel = in_val, in_gmm
+        elif args.set_mode == "val":
+            gwm_sel, gmm_sel = in_val, in_gmm & in_val
+            gmm_label += ", test split"
+        else:
+            finite = np.ones(in_val.shape, dtype=bool)
+            for key in PEAK_KEYS:
+                finite &= np.isfinite(cache[key]) & (cache[key] > 0)
+            gwm_sel = gmm_sel = in_val & in_gmm & finite
+            gwm_label += f", M$\\geq${min_mag:g}"
+            gmm_label += ", test split"
+        panels[0] = (*panels[0][:4], gwm_sel, *panels[0][5:])
+        panels[1] = (*panels[1][:4], gwm_sel, *panels[1][5:])
+        gmm_bin_km = args.gmm_bin_km if args.gmm_bin_km else args.bin_km
+        panels.extend([
+            ("c)", "PGA", "pga_obs_rot", pga_key, gmm_sel,
+             gmm_label, GMM_COLOR, "GMM", gmm_bin_km),
+            ("d)", "PGV", "pgv_obs_rot", pgv_key, gmm_sel,
+             gmm_label, GMM_COLOR, "GMM", gmm_bin_km),
+        ])
 
-    fig, axes = plt.subplots(2, 2, figsize=(11, 7.5), sharex=True, sharey=True)
+    nrows = 2 if gmm is not None else 1
+    fig, axes = plt.subplots(nrows, 2, figsize=(11, 7.5 if nrows == 2 else 4.2),
+                             sharex=True, sharey=True, squeeze=False)
     fig.patch.set_facecolor("white")
 
     for ax, (tag, im, obs_key, pred_key, base_sel, label, color, denom,
@@ -645,14 +656,13 @@ def run_plot(args):
         ax.tick_params(colors=MUTED)
         for spine in ax.spines.values():
             spine.set_color(MUTED)
-    for ax in axes[1]:
+    for ax in axes[-1]:
         ax.set_xlabel("Hypocentral Distance [km]", color=INK)
 
-    fig.suptitle(
-        f"Peak amplitude model bias vs hypocentral distance — "
-        f"GWM (test split, E comp.) and {gmm['label']} (RotD50)",
-        color=INK, fontsize=12,
-    )
+    title = "Peak amplitude model bias vs hypocentral distance — GWM (test split, E comp.)"
+    if gmm is not None:
+        title += f" and {gmm['label']} (RotD50)"
+    fig.suptitle(title, color=INK, fontsize=12)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
 
     out = OUT_DIR / (f"fig_{path.stem.removeprefix('peaks_')}"
@@ -667,9 +677,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     parser.add_argument("stage", choices=["compute", "plot", "all"], nargs="?",
                         default="all")
-    parser.add_argument("--gmm", choices=sorted(GMM_REGISTRY), default="bssa14",
+    parser.add_argument("--gmm", choices=["none", *sorted(GMM_REGISTRY)], default="bssa14",
                         help="Ground motion model for panels c/d (see module "
-                             "docstring for validity notes).")
+                             "docstring for validity notes), or 'none'.")
     parser.add_argument("--gmm_min_mag", type=float, default=None,
                         help="Magnitude floor for the GMM rows "
                              "(default: the chosen model's validity floor).")
